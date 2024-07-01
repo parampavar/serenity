@@ -1,5 +1,5 @@
 # Flags shared by Lagom (including Ladybird) and Serenity.
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -34,6 +34,7 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang$")
     add_compile_options(-Wno-implicit-const-int-float-conversion)
     add_compile_options(-Wno-user-defined-literals)
     add_compile_options(-Wno-vla-cxx-extension)
+    add_compile_options(-Wno-coroutine-missing-unhandled-exception)
 elseif (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     # Only ignore expansion-to-defined for g++, clang's implementation doesn't complain about function-like macros
     add_compile_options(-Wno-expansion-to-defined)

@@ -149,7 +149,7 @@ String Node::descendant_text_content() const
     StringBuilder builder;
     for_each_in_subtree_of_type<Text>([&](auto& text_node) {
         builder.append(text_node.data());
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     });
     return builder.to_string_without_validation();
 }
@@ -275,13 +275,13 @@ void Node::invalidate_style()
         node.m_needs_style_update = true;
         if (node.has_children())
             node.m_child_needs_style_update = true;
-        if (auto* shadow_root = node.is_element() ? static_cast<DOM::Element&>(node).shadow_root_internal() : nullptr) {
+        if (auto shadow_root = node.is_element() ? static_cast<DOM::Element&>(node).shadow_root() : nullptr) {
             node.m_child_needs_style_update = true;
             shadow_root->m_needs_style_update = true;
             if (shadow_root->has_children())
                 shadow_root->m_child_needs_style_update = true;
         }
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     });
     for (auto* ancestor = parent_or_shadow_host(); ancestor; ancestor = ancestor->parent_or_shadow_host())
         ancestor->m_child_needs_style_update = true;
@@ -300,6 +300,7 @@ String Node::child_text_content() const
             if (maybe_content.has_value())
                 builder.append(maybe_content.value());
         }
+        return IterationDecision::Continue;
     });
     return MUST(builder.to_string());
 }
@@ -461,7 +462,7 @@ void Node::insert_before(JS::NonnullGCPtr<Node> node, JS::GCPtr<Node> child, boo
             auto& element = static_cast<DOM::Element&>(*this);
 
             auto is_named_shadow_host = element.is_shadow_host()
-                && element.shadow_root_internal()->slot_assignment() == Bindings::SlotAssignmentMode::Named;
+                && element.shadow_root()->slot_assignment() == Bindings::SlotAssignmentMode::Named;
 
             if (is_named_shadow_host && node_to_insert->is_slottable())
                 assign_a_slot(node_to_insert->as_slottable());
@@ -506,7 +507,7 @@ void Node::insert_before(JS::NonnullGCPtr<Node> node, JS::GCPtr<Node> child, boo
                 }
             }
 
-            return IterationDecision::Continue;
+            return TraversalDecision::Continue;
         });
     }
 
@@ -645,7 +646,7 @@ void Node::remove(bool suppress_observers)
 
     for_each_in_inclusive_subtree_of_type<HTML::HTMLSlotElement>([&](auto const&) {
         has_descendent_slot = true;
-        return IterationDecision::Break;
+        return TraversalDecision::Break;
     });
 
     if (has_descendent_slot) {
@@ -691,7 +692,7 @@ void Node::remove(bool suppress_observers)
             }
         }
 
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     });
 
     // 19. For each inclusive ancestor inclusiveAncestor of parent, and then for each registered of inclusiveAncestor’s registered observer list,
@@ -816,7 +817,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Node>> Node::replace_child(JS::NonnullGCPtr
 }
 
 // https://dom.spec.whatwg.org/#concept-node-clone
-JS::NonnullGCPtr<Node> Node::clone_node(Document* document, bool clone_children)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<Node>> Node::clone_node(Document* document, bool clone_children)
 {
     // 1. If document is not given, let document be node’s node document.
     if (!document)
@@ -897,17 +898,37 @@ JS::NonnullGCPtr<Node> Node::clone_node(Document* document, bool clone_children)
     // FIXME: 4. Set copy’s node document and document to copy, if copy is a document, and set copy’s node document to document otherwise.
 
     // 5. Run any cloning steps defined for node in other applicable specifications and pass copy, node, document and the clone children flag if set, as parameters.
-    cloned(*copy, clone_children);
+    TRY(cloned(*copy, clone_children));
 
     // 6. If the clone children flag is set, clone all the children of node and append them to copy, with document as specified and the clone children flag being set.
     if (clone_children) {
-        for_each_child([&](auto& child) {
-            MUST(copy->append_child(child.clone_node(document, true)));
-        });
+        for (auto child = first_child(); child; child = child->next_sibling()) {
+            TRY(copy->append_child(TRY(child->clone_node(document, true))));
+        }
+    }
+
+    // 7. If node is a shadow host whose shadow root’s clonable is true:
+    if (is_element() && static_cast<Element const&>(*this).is_shadow_host() && static_cast<Element const&>(*this).shadow_root()->clonable()) {
+        // 1. Assert: copy is not a shadow host.
+        VERIFY(!copy->is_element() || !static_cast<Element const&>(*copy).is_shadow_host());
+
+        // 2. Run attach a shadow root with copy, node’s shadow root’s mode, true, node’s shadow root’s serializable,
+        //    node’s shadow root’s delegates focus, and node’s shadow root’s slot assignment.
+        auto& node_shadow_root = *static_cast<Element&>(*this).shadow_root();
+        TRY(static_cast<Element&>(*copy).attach_a_shadow_root(node_shadow_root.mode(), true, node_shadow_root.serializable(), node_shadow_root.delegates_focus(), node_shadow_root.slot_assignment()));
+
+        // 3. Set copy’s shadow root’s declarative to node’s shadow root’s declarative.
+        static_cast<Element&>(*copy).shadow_root()->set_declarative(node_shadow_root.declarative());
+
+        // 4. For each child child of node’s shadow root, in tree order:
+        //    append the result of cloning child with document and the clone children flag set, to copy’s shadow root.
+        for (auto child = node_shadow_root.first_child(); child; child = child->next_sibling()) {
+            TRY(static_cast<Element&>(*copy).shadow_root()->append_child(TRY(child->clone_node(document, true))));
+        }
     }
 
     // 7. Return copy.
-    return *copy;
+    return JS::NonnullGCPtr { *copy };
 }
 
 // https://dom.spec.whatwg.org/#dom-node-clonenode
@@ -1032,6 +1053,7 @@ Vector<JS::Handle<Node>> Node::children_as_vector() const
 
     for_each_child([&](auto& child) {
         nodes.append(JS::make_handle(child));
+        return IterationDecision::Continue;
     });
 
     return nodes;
@@ -1223,10 +1245,11 @@ void Node::serialize_tree_as_json(JsonObjectSerializer<StringBuilder>& object) c
         auto children = MUST(object.add_array("children"sv));
         auto add_child = [&children](DOM::Node const& child) {
             if (child.is_uninteresting_whitespace_node())
-                return;
+                return IterationDecision::Continue;
             JsonObjectSerializer<StringBuilder> child_object = MUST(children.add_object());
             child.serialize_tree_as_json(child_object);
             MUST(child_object.finish());
+            return IterationDecision::Continue;
         };
         for_each_child(add_child);
 
@@ -1237,7 +1260,7 @@ void Node::serialize_tree_as_json(JsonObjectSerializer<StringBuilder>& object) c
             element->serialize_pseudo_elements_as_json(children);
 
             if (element->is_shadow_host())
-                add_child(*element->shadow_root_internal());
+                add_child(*element->shadow_root());
         }
 
         MUST(children.finish());
@@ -1348,18 +1371,38 @@ void Node::string_replace_all(String const& string)
     replace_all(node);
 }
 
-// https://w3c.github.io/DOM-Parsing/#dfn-fragment-serializing-algorithm
+// https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#fragment-serializing-algorithm-steps
 WebIDL::ExceptionOr<String> Node::serialize_fragment(DOMParsing::RequireWellFormed require_well_formed, FragmentSerializationMode fragment_serialization_mode) const
 {
     // 1. Let context document be the value of node's node document.
     auto const& context_document = document();
 
-    // 2. If context document is an HTML document, return an HTML serialization of node.
+    // 2. If context document is an HTML document, return the result of HTML fragment serialization algorithm with node, false, and « ».
     if (context_document.is_html_document())
-        return HTML::HTMLParser::serialize_html_fragment(*this, fragment_serialization_mode);
+        return HTML::HTMLParser::serialize_html_fragment(*this, HTML::HTMLParser::SerializableShadowRoots::No, {}, fragment_serialization_mode);
 
-    // 3. Otherwise, context document is an XML document; return an XML serialization of node passing the flag require well-formed.
+    // 3. Return the XML serialization of node given require well-formed.
     return DOMParsing::serialize_node_to_xml_string(*this, require_well_formed);
+}
+
+// https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#unsafely-set-html
+WebIDL::ExceptionOr<void> Node::unsafely_set_html(Element& context_element, StringView html)
+{
+    // 1. Let newChildren be the result of the HTML fragment parsing algorithm given contextElement, html, and true.
+    auto new_children = HTML::HTMLParser::parse_html_fragment(context_element, html, HTML::HTMLParser::AllowDeclarativeShadowRoots::Yes);
+
+    // 2. Let fragment be a new DocumentFragment whose node document is contextElement’s node document.
+    auto fragment = heap().allocate<DocumentFragment>(realm(), context_element.document());
+
+    // 3. For each node in newChildren, append node to fragment.
+    for (auto& child : new_children)
+        // I don't know if this can throw here, but let's be safe.
+        (void)TRY(fragment->append_child(*child));
+
+    // 4. Replace all with fragment within contextElement.
+    replace_all(fragment);
+
+    return {};
 }
 
 // https://dom.spec.whatwg.org/#dom-node-issamenode
@@ -1741,6 +1784,7 @@ void Node::build_accessibility_tree(AccessibilityTreeNode& parent)
             if (document_element->has_child_nodes())
                 document_element->for_each_child([&parent](DOM::Node& child) {
                     child.build_accessibility_tree(parent);
+                    return IterationDecision::Continue;
                 });
         }
     } else if (is_element()) {
@@ -1755,11 +1799,13 @@ void Node::build_accessibility_tree(AccessibilityTreeNode& parent)
             if (has_child_nodes()) {
                 for_each_child([&current_node](DOM::Node& child) {
                     child.build_accessibility_tree(*current_node);
+                    return IterationDecision::Continue;
                 });
             }
         } else if (has_child_nodes()) {
             for_each_child([&parent](DOM::Node& child) {
                 child.build_accessibility_tree(parent);
+                return IterationDecision::Continue;
             });
         }
     } else if (is_text()) {
@@ -1767,6 +1813,7 @@ void Node::build_accessibility_tree(AccessibilityTreeNode& parent)
         if (has_child_nodes()) {
             for_each_child([&parent](DOM::Node& child) {
                 child.build_accessibility_tree(parent);
+                return IterationDecision::Continue;
             });
         }
     }
@@ -1865,7 +1912,7 @@ ErrorOr<String> Node::name_or_description(NameOrDescription target, Document con
             element->for_each_child([&total_accumulated_text, current_node, target, &document, &visited_nodes](
                                         DOM::Node const& child_node) mutable {
                 if (visited_nodes.contains(child_node.unique_id()))
-                    return;
+                    return IterationDecision::Continue;
 
                 // a. Set the current node to the child node.
                 current_node = &child_node;
@@ -1875,6 +1922,8 @@ ErrorOr<String> Node::name_or_description(NameOrDescription target, Document con
 
                 // c. Append the result to the accumulated text.
                 total_accumulated_text.append(result);
+
+                return IterationDecision::Continue;
             });
             // iv. Return the accumulated text.
             return total_accumulated_text.to_string();

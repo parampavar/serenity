@@ -127,6 +127,8 @@ static CSSPixelRect measure_scrollable_overflow(Box const& box)
                 for (auto const& fragment : static_cast<Painting::InlinePaintable const&>(*child.paintable()).fragments())
                     scrollable_overflow_rect = scrollable_overflow_rect.united(fragment.absolute_rect());
             }
+
+            return IterationDecision::Continue;
         });
     }
 
@@ -208,11 +210,11 @@ void LayoutState::commit(Box& root)
     //       when text paintables shift around in the tree.
     root.for_each_in_inclusive_subtree([&](Layout::Node& node) {
         node.set_paintable(nullptr);
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     });
     root.document().for_each_shadow_including_inclusive_descendant([&](DOM::Node& node) {
         node.set_paintable(nullptr);
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     });
 
     HashTable<Layout::TextNode*> text_nodes;

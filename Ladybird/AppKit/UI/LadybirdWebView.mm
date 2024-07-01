@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2023-2024, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -178,6 +178,22 @@ struct HideCursor {
 - (void)handleVisibility:(BOOL)is_visible
 {
     m_web_view_bridge->set_system_visibility_state(is_visible);
+}
+
+- (void)findInPage:(NSString*)query
+    caseSensitivity:(CaseSensitivity)case_sensitivity
+{
+    m_web_view_bridge->find_in_page(Ladybird::ns_string_to_string(query), case_sensitivity);
+}
+
+- (void)findInPageNextMatch
+{
+    m_web_view_bridge->find_in_page_next_match();
+}
+
+- (void)findInPagePreviousMatch
+{
+    m_web_view_bridge->find_in_page_previous_match();
 }
 
 - (void)zoomIn
@@ -1338,13 +1354,13 @@ static void copy_data_to_clipboard(StringView data, NSPasteboardType pasteboard_
 
 - (void)mouseMoved:(NSEvent*)event
 {
-    auto mouse_event = Ladybird::ns_event_to_mouse_event(Web::MouseEvent::Type::MouseMove, event, self, [self scrollView], GUI::MouseButton::None);
+    auto mouse_event = Ladybird::ns_event_to_mouse_event(Web::MouseEvent::Type::MouseMove, event, self, [self scrollView], Web::UIEvents::MouseButton::None);
     m_web_view_bridge->enqueue_input_event(move(mouse_event));
 }
 
 - (void)scrollWheel:(NSEvent*)event
 {
-    auto mouse_event = Ladybird::ns_event_to_mouse_event(Web::MouseEvent::Type::MouseWheel, event, self, [self scrollView], GUI::MouseButton::Middle);
+    auto mouse_event = Ladybird::ns_event_to_mouse_event(Web::MouseEvent::Type::MouseWheel, event, self, [self scrollView], Web::UIEvents::MouseButton::Middle);
     m_web_view_bridge->enqueue_input_event(move(mouse_event));
 }
 
@@ -1352,19 +1368,19 @@ static void copy_data_to_clipboard(StringView data, NSPasteboardType pasteboard_
 {
     [[self window] makeFirstResponder:self];
 
-    auto mouse_event = Ladybird::ns_event_to_mouse_event(Web::MouseEvent::Type::MouseDown, event, self, [self scrollView], GUI::MouseButton::Primary);
+    auto mouse_event = Ladybird::ns_event_to_mouse_event(Web::MouseEvent::Type::MouseDown, event, self, [self scrollView], Web::UIEvents::MouseButton::Primary);
     m_web_view_bridge->enqueue_input_event(move(mouse_event));
 }
 
 - (void)mouseUp:(NSEvent*)event
 {
-    auto mouse_event = Ladybird::ns_event_to_mouse_event(Web::MouseEvent::Type::MouseUp, event, self, [self scrollView], GUI::MouseButton::Primary);
+    auto mouse_event = Ladybird::ns_event_to_mouse_event(Web::MouseEvent::Type::MouseUp, event, self, [self scrollView], Web::UIEvents::MouseButton::Primary);
     m_web_view_bridge->enqueue_input_event(move(mouse_event));
 }
 
 - (void)mouseDragged:(NSEvent*)event
 {
-    auto mouse_event = Ladybird::ns_event_to_mouse_event(Web::MouseEvent::Type::MouseMove, event, self, [self scrollView], GUI::MouseButton::Primary);
+    auto mouse_event = Ladybird::ns_event_to_mouse_event(Web::MouseEvent::Type::MouseMove, event, self, [self scrollView], Web::UIEvents::MouseButton::Primary);
     m_web_view_bridge->enqueue_input_event(move(mouse_event));
 }
 
@@ -1372,19 +1388,48 @@ static void copy_data_to_clipboard(StringView data, NSPasteboardType pasteboard_
 {
     [[self window] makeFirstResponder:self];
 
-    auto mouse_event = Ladybird::ns_event_to_mouse_event(Web::MouseEvent::Type::MouseDown, event, self, [self scrollView], GUI::MouseButton::Primary);
+    auto mouse_event = Ladybird::ns_event_to_mouse_event(Web::MouseEvent::Type::MouseDown, event, self, [self scrollView], Web::UIEvents::MouseButton::Secondary);
     m_web_view_bridge->enqueue_input_event(move(mouse_event));
 }
 
 - (void)rightMouseUp:(NSEvent*)event
 {
-    auto mouse_event = Ladybird::ns_event_to_mouse_event(Web::MouseEvent::Type::MouseUp, event, self, [self scrollView], GUI::MouseButton::Secondary);
+    auto mouse_event = Ladybird::ns_event_to_mouse_event(Web::MouseEvent::Type::MouseUp, event, self, [self scrollView], Web::UIEvents::MouseButton::Secondary);
     m_web_view_bridge->enqueue_input_event(move(mouse_event));
 }
 
 - (void)rightMouseDragged:(NSEvent*)event
 {
-    auto mouse_event = Ladybird::ns_event_to_mouse_event(Web::MouseEvent::Type::MouseMove, event, self, [self scrollView], GUI::MouseButton::Secondary);
+    auto mouse_event = Ladybird::ns_event_to_mouse_event(Web::MouseEvent::Type::MouseMove, event, self, [self scrollView], Web::UIEvents::MouseButton::Secondary);
+    m_web_view_bridge->enqueue_input_event(move(mouse_event));
+}
+
+- (void)otherMouseDown:(NSEvent*)event
+{
+    if (event.buttonNumber != 2)
+        return;
+
+    [[self window] makeFirstResponder:self];
+
+    auto mouse_event = Ladybird::ns_event_to_mouse_event(Web::MouseEvent::Type::MouseDown, event, self, [self scrollView], Web::UIEvents::MouseButton::Middle);
+    m_web_view_bridge->enqueue_input_event(move(mouse_event));
+}
+
+- (void)otherMouseUp:(NSEvent*)event
+{
+    if (event.buttonNumber != 2)
+        return;
+
+    auto mouse_event = Ladybird::ns_event_to_mouse_event(Web::MouseEvent::Type::MouseUp, event, self, [self scrollView], Web::UIEvents::MouseButton::Middle);
+    m_web_view_bridge->enqueue_input_event(move(mouse_event));
+}
+
+- (void)otherMouseDragged:(NSEvent*)event
+{
+    if (event.buttonNumber != 2)
+        return;
+
+    auto mouse_event = Ladybird::ns_event_to_mouse_event(Web::MouseEvent::Type::MouseMove, event, self, [self scrollView], Web::UIEvents::MouseButton::Middle);
     m_web_view_bridge->enqueue_input_event(move(mouse_event));
 }
 

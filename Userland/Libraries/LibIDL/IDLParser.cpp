@@ -225,9 +225,11 @@ NonnullRefPtr<Type const> Parser::parse_type()
     if (unsigned_)
         consume_whitespace();
 
-    // FIXME: Actually treat "unrestricted" and normal floats/doubles differently.
-    if (lexer.consume_specific("unrestricted"sv))
+    bool unrestricted = lexer.consume_specific("unrestricted"sv);
+    if (unrestricted)
         consume_whitespace();
+
+    VERIFY(!(unsigned_ && unrestricted));
 
     auto name = lexer.consume_until([](auto ch) { return !is_ascii_alphanumeric(ch) && ch != '_'; });
 
@@ -252,6 +254,9 @@ NonnullRefPtr<Type const> Parser::parse_type()
     StringBuilder builder;
     if (unsigned_)
         builder.append("unsigned "sv);
+    if (unrestricted)
+        builder.append("unrestricted "sv);
+
     builder.append(name);
 
     if (nullable) {
@@ -292,8 +297,11 @@ void Parser::parse_attribute(HashMap<ByteString, ByteString>& extended_attribute
     if (readonly)
         consume_whitespace();
 
+    // FIXME: Should we parse 'readonly setlike<T>' differently than this?
     if (lexer.consume_specific("attribute"sv))
         consume_whitespace();
+    else if (lexer.consume_specific("setlike"sv) && !inherit)
+        parse_setlike(interface, readonly);
     else
         report_parsing_error("expected 'attribute'"sv, filename, input, lexer.tell());
 
@@ -466,6 +474,28 @@ void Parser::parse_iterable(Interface& interface)
 
         interface.value_iterator_type = move(first_type);
     }
+
+    if (interface.set_entry_type.has_value())
+        report_parsing_error("Interfaces with an iterable declaration must not have a setlike declaration."sv, filename, input, lexer.tell());
+
+    assert_specific('>');
+    assert_specific(';');
+}
+
+void Parser::parse_setlike(Interface& interface, bool is_readonly)
+{
+    if (interface.supports_indexed_properties())
+        report_parsing_error("Interfaces with a setlike declaration must not supported indexed properties."sv, filename, input, lexer.tell());
+
+    if (interface.value_iterator_type.has_value() || interface.pair_iterator_types.has_value())
+        report_parsing_error("Interfaces with a setlike declaration must not must not be iterable."sv, filename, input, lexer.tell());
+
+    assert_string("setlike"sv);
+    assert_specific('<');
+
+    interface.set_entry_type = parse_type();
+    interface.is_set_readonly = is_readonly;
+
     assert_specific('>');
     assert_specific(';');
 }
@@ -622,6 +652,12 @@ void Parser::parse_interface(Interface& interface)
 
         if (lexer.next_is("iterable")) {
             parse_iterable(interface);
+            continue;
+        }
+
+        if (lexer.next_is("setlike")) {
+            bool is_readonly = false;
+            parse_setlike(interface, is_readonly);
             continue;
         }
 
@@ -1122,6 +1158,8 @@ Interface& Parser::parse()
 
     // Create overload sets
     for (auto& function : interface.functions) {
+        if (function.extended_attributes.contains("FIXME"))
+            continue;
         auto& overload_set = interface.overload_sets.ensure(function.name);
         function.overload_index = overload_set.size();
         overload_set.append(function);
@@ -1133,6 +1171,8 @@ Interface& Parser::parse()
             overloaded_function.is_overloaded = true;
     }
     for (auto& function : interface.static_functions) {
+        if (function.extended_attributes.contains("FIXME"))
+            continue;
         auto& overload_set = interface.static_overload_sets.ensure(function.name);
         function.overload_index = overload_set.size();
         overload_set.append(function);
@@ -1144,6 +1184,8 @@ Interface& Parser::parse()
             overloaded_function.is_overloaded = true;
     }
     for (auto& constructor : interface.constructors) {
+        if (constructor.extended_attributes.contains("FIXME"))
+            continue;
         auto& overload_set = interface.constructor_overload_sets.ensure(constructor.name);
         constructor.overload_index = overload_set.size();
         overload_set.append(constructor);

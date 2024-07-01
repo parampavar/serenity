@@ -12,9 +12,9 @@
 #include <AK/Vector.h>
 #include <LibGfx/Font/UnicodeRange.h>
 #include <LibWeb/CSS/CSSStyleDeclaration.h>
-#include <LibWeb/CSS/FontFace.h>
 #include <LibWeb/CSS/GeneralEnclosed.h>
 #include <LibWeb/CSS/MediaQuery.h>
+#include <LibWeb/CSS/ParsedFontFace.h>
 #include <LibWeb/CSS/Parser/Block.h>
 #include <LibWeb/CSS/Parser/ComponentValue.h>
 #include <LibWeb/CSS/Parser/Declaration.h>
@@ -69,9 +69,61 @@ public:
 
     Optional<ComponentValue> parse_as_component_value();
 
+    Vector<ParsedFontFace::Source> parse_as_font_face_src();
+
     static NonnullRefPtr<StyleValue> resolve_unresolved_style_value(ParsingContext const&, DOM::Element&, Optional<CSS::Selector::PseudoElement::Type>, PropertyID, UnresolvedStyleValue const&);
 
     [[nodiscard]] LengthOrCalculated parse_as_sizes_attribute();
+
+    // https://html.spec.whatwg.org/multipage/semantics-other.html#case-sensitivity-of-selectors
+    static constexpr Array case_insensitive_html_attributes = {
+        "accept"sv,
+        "accept-charset"sv,
+        "align"sv,
+        "alink"sv,
+        "axis"sv,
+        "bgcolor"sv,
+        "charset"sv,
+        "checked"sv,
+        "clear"sv,
+        "codetype"sv,
+        "color"sv,
+        "compact"sv,
+        "declare"sv,
+        "defer"sv,
+        "dir"sv,
+        "direction"sv,
+        "disabled"sv,
+        "enctype"sv,
+        "face"sv,
+        "frame"sv,
+        "hreflang"sv,
+        "http-equiv"sv,
+        "lang"sv,
+        "language"sv,
+        "link"sv,
+        "media"sv,
+        "method"sv,
+        "multiple"sv,
+        "nohref"sv,
+        "noresize"sv,
+        "noshade"sv,
+        "nowrap"sv,
+        "readonly"sv,
+        "rel"sv,
+        "rev"sv,
+        "rules"sv,
+        "scope"sv,
+        "scrolling"sv,
+        "selected"sv,
+        "shape"sv,
+        "target"sv,
+        "text"sv,
+        "type"sv,
+        "valign"sv,
+        "valuetype"sv,
+        "vlink"sv,
+    };
 
 private:
     Parser(ParsingContext const&, Vector<Token>);
@@ -162,7 +214,9 @@ private:
     Optional<GeneralEnclosed> parse_general_enclosed(TokenStream<ComponentValue>&);
 
     CSSRule* parse_font_face_rule(TokenStream<ComponentValue>&);
-    Vector<FontFace::Source> parse_font_face_src(TokenStream<ComponentValue>&);
+
+    template<typename T>
+    Vector<ParsedFontFace::Source> parse_font_face_src(TokenStream<T>&);
 
     CSSRule* convert_to_rule(NonnullRefPtr<Rule>);
     CSSMediaRule* convert_to_media_rule(NonnullRefPtr<Rule>);
@@ -190,6 +244,7 @@ private:
     Optional<Ratio> parse_ratio(TokenStream<ComponentValue>&);
     Optional<Gfx::UnicodeRange> parse_unicode_range(TokenStream<ComponentValue>&);
     Optional<Gfx::UnicodeRange> parse_unicode_range(StringView);
+    Vector<Gfx::UnicodeRange> parse_unicode_ranges(TokenStream<ComponentValue>&);
     Optional<GridSize> parse_grid_size(ComponentValue const&);
     Optional<GridMinMax> parse_min_max(Vector<ComponentValue> const&);
     Optional<GridRepeat> parse_repeat(Vector<ComponentValue> const&);
@@ -197,6 +252,9 @@ private:
 
     Optional<URL::URL> parse_url_function(ComponentValue const&);
     RefPtr<StyleValue> parse_url_value(TokenStream<ComponentValue>&);
+
+    RefPtr<StyleValue> parse_basic_shape_function(ComponentValue const&);
+    RefPtr<StyleValue> parse_basic_shape_value(TokenStream<ComponentValue>&);
 
     template<typename TElement>
     Optional<Vector<TElement>> parse_color_stop_list(TokenStream<ComponentValue>& tokens, auto is_position, auto get_position);

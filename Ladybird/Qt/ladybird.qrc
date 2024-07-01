@@ -4,7 +4,10 @@
         <file>../Icons/back.tvg</file>
         <file>../Icons/close.tvg</file>
         <file>../Icons/forward.tvg</file>
+        <file>../Icons/hamburger.tvg</file>
         <file>../Icons/new_tab.tvg</file>
         <file>../Icons/reload.tvg</file>
+        <file>../Icons/up.tvg</file>
+        <file>../Icons/down.tvg</file>
     </qresource>
 </RCC>

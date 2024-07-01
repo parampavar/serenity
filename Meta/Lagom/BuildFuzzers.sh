@@ -14,7 +14,7 @@ die() {
 
 pick_clang() {
     local BEST_VERSION=0
-    for CLANG_CANDIDATE in clang clang-15 clang-16 clang-17 clang-18 /opt/homebrew/opt/llvm/bin/clang ; do
+    for CLANG_CANDIDATE in clang clang-17 clang-18 /opt/homebrew/opt/llvm/bin/clang ; do
         if ! command -v $CLANG_CANDIDATE >/dev/null 2>&1; then
             continue
         fi
@@ -47,7 +47,10 @@ unset CXXFLAGS
 export AFL_NOOPT=1
 
 if [ "$#" -gt "0" ] && [ "--oss-fuzz" = "$1" ] ; then
-    CXXFLAGS="$CXXFLAGS -DOSS_FUZZ=ON"
+    # The oss-fuzz runner image (as of June 2024) has libstdc++ 9, which lacks the
+    # <coroutine> header. Use the more modern libc++ shipped with oss-fuzz's Clang.
+    # It's already set in CXXFLAGS_SAVE.
+    CXXFLAGS="$CXXFLAGS -DOSS_FUZZ=ON -stdlib=libc++"
 fi
 
 # FIXME: Replace these CMake invocations with a CMake superbuild?

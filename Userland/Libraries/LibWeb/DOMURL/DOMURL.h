@@ -2,6 +2,7 @@
  * Copyright (c) 2021, Idan Horowitz <idan.horowitz@serenityos.org>
  * Copyright (c) 2021, the SerenityOS developers.
  * Copyright (c) 2023, networkException <networkexception@serenityos.org>
+ * Copyright (c) 2024, Shannon Booth <shannon@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -28,6 +29,7 @@ public:
     static WebIDL::ExceptionOr<String> create_object_url(JS::VM&, JS::NonnullGCPtr<FileAPI::Blob> object);
     static WebIDL::ExceptionOr<void> revoke_object_url(JS::VM&, StringView url);
 
+    static JS::GCPtr<DOMURL> parse_for_bindings(JS::VM&, String const& url, Optional<String> const& base = {});
     static bool can_parse(JS::VM&, String const& url, Optional<String> const& base = {});
 
     WebIDL::ExceptionOr<String> href() const;
@@ -80,6 +82,8 @@ public:
 
 private:
     DOMURL(JS::Realm&, URL::URL, JS::NonnullGCPtr<URLSearchParams> query);
+
+    static JS::NonnullGCPtr<DOMURL> initialize_a_url(JS::Realm&, URL::URL const&);
 
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;

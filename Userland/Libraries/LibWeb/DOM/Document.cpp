@@ -26,6 +26,7 @@
 #include <LibWeb/Bindings/MainThreadVM.h>
 #include <LibWeb/CSS/AnimationEvent.h>
 #include <LibWeb/CSS/CSSAnimation.h>
+#include <LibWeb/CSS/FontFaceSet.h>
 #include <LibWeb/CSS/MediaQueryList.h>
 #include <LibWeb/CSS/MediaQueryListEvent.h>
 #include <LibWeb/CSS/StyleComputer.h>
@@ -52,6 +53,7 @@
 #include <LibWeb/DOM/ShadowRoot.h>
 #include <LibWeb/DOM/Text.h>
 #include <LibWeb/DOM/TreeWalker.h>
+#include <LibWeb/DOMURL/DOMURL.h>
 #include <LibWeb/Dump.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Responses.h>
 #include <LibWeb/FileAPI/BlobURLStore.h>
@@ -286,7 +288,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Document>> Document::create_and_initialize(
     //     URL: creationURL
     //     current document readiness: "loading"
     //     about base URL: navigationParams's about base URL
-    //     FIXME: allow declarative shadow roots: true
+    //     allow declarative shadow roots: true
     auto document = HTML::HTMLDocument::create(window->realm());
     document->m_type = type;
     document->m_content_type = move(content_type);
@@ -298,6 +300,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Document>> Document::create_and_initialize(
     document->set_url(*creation_url);
     document->m_readiness = HTML::DocumentReadyState::Loading;
     document->m_about_base_url = navigation_params.about_base_url;
+    document->set_allow_declarative_shadow_roots(true);
 
     document->m_window = window;
 
@@ -440,6 +443,7 @@ void Document::visit_edges(Cell::Visitor& visitor)
     visitor.visit(m_forms);
     visitor.visit(m_scripts);
     visitor.visit(m_all);
+    visitor.visit(m_fonts);
     visitor.visit(m_selection);
     visitor.visit(m_first_base_element_with_href_in_tree_order);
     visitor.visit(m_parser);
@@ -553,7 +557,7 @@ WebIDL::ExceptionOr<Document*> Document::open(Optional<String> const&, Optional<
     // If document belongs to a child navigable, we need to make sure its initial navigation is done,
     // because subsequent steps will modify "initial about:blank" to false, which would cause
     // initial navigation to fail in case it was "about:blank".
-    if (auto navigable = this->navigable(); navigable->container() && !navigable->container()->content_navigable_initialized()) {
+    if (auto navigable = this->navigable(); navigable && navigable->container() && !navigable->container()->content_navigable_initialized()) {
         HTML::main_thread_event_loop().spin_processing_tasks_with_source_until(HTML::Task::Source::NavigationAndTraversal, [navigable_container = navigable->container()] {
             return navigable_container->content_navigable_initialized();
         });
@@ -751,10 +755,32 @@ JS::GCPtr<HTML::HTMLTitleElement> Document::title_element()
 
     for_each_in_subtree_of_type<HTML::HTMLTitleElement>([&](auto& title_element_in_tree) {
         title_element = title_element_in_tree;
-        return IterationDecision::Break;
+        return TraversalDecision::Break;
     });
 
     return title_element;
+}
+
+// https://html.spec.whatwg.org/multipage/dom.html#dom-document-dir
+StringView Document::dir() const
+{
+    // The dir IDL attribute on Document objects must reflect the dir content attribute of the html
+    // element, if any, limited to only known values. If there is no such element, then the
+    // attribute must return the empty string and do nothing on setting.
+    if (auto html = html_element())
+        return html->dir();
+
+    return ""sv;
+}
+
+// https://html.spec.whatwg.org/multipage/dom.html#dom-document-dir
+void Document::set_dir(String const& dir)
+{
+    // The dir IDL attribute on Document objects must reflect the dir content attribute of the html
+    // element, if any, limited to only known values. If there is no such element, then the
+    // attribute must return the empty string and do nothing on setting.
+    if (auto html = html_element())
+        html->set_dir(dir);
 }
 
 HTML::HTMLElement* Document::body()
@@ -917,7 +943,7 @@ Vector<CSS::BackgroundLayerData> const* Document::background_layers() const
     if (!body_element)
         return {};
 
-    auto* body_layout_node = body_element->layout_node();
+    auto body_layout_node = body_element->layout_node();
     if (!body_layout_node)
         return {};
 
@@ -931,10 +957,10 @@ void Document::update_base_element(Badge<HTML::HTMLBaseElement>)
     for_each_in_subtree_of_type<HTML::HTMLBaseElement>([&base_element](HTML::HTMLBaseElement const& base_element_in_tree) {
         if (base_element_in_tree.has_attribute(HTML::AttributeNames::href)) {
             base_element = &base_element_in_tree;
-            return IterationDecision::Break;
+            return TraversalDecision::Break;
         }
 
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     });
 
     m_first_base_element_with_href_in_tree_order = base_element;
@@ -980,8 +1006,11 @@ URL::URL Document::base_url() const
 // https://html.spec.whatwg.org/multipage/urls-and-fetching.html#parse-a-url
 URL::URL Document::parse_url(StringView url) const
 {
-    // FIXME: Pass in document's character encoding.
-    return base_url().complete_url(url);
+    // 1. Let baseURL be environment's base URL, if environment is a Document object; otherwise environment's API base URL.
+    auto base_url = this->base_url();
+
+    // 2. Return the result of applying the URL parser to url, with baseURL.
+    return DOMURL::parse(url, base_url);
 }
 
 void Document::set_needs_layout()
@@ -1003,7 +1032,7 @@ static void propagate_overflow_to_viewport(Element& root_element, Layout::Viewpo
     // https://drafts.csswg.org/css-overflow-3/#overflow-propagation
     // UAs must apply the overflow-* values set on the root element to the viewport
     // when the root element’s display value is not none.
-    auto* overflow_origin_node = root_element.layout_node();
+    auto overflow_origin_node = root_element.layout_node();
     auto& viewport_computed_values = viewport.mutable_computed_values();
 
     // However, when the root element is an [HTML] html element (including XML syntax for HTML)
@@ -1011,7 +1040,7 @@ static void propagate_overflow_to_viewport(Element& root_element, Layout::Viewpo
     // a body element whose display value is also not none,
     // user agents must instead apply the overflow-* values of the first such child element to the viewport.
     if (root_element.is_html_html_element()) {
-        auto* root_element_layout_node = root_element.layout_node();
+        auto root_element_layout_node = root_element.layout_node();
         auto& root_element_computed_values = root_element_layout_node->mutable_computed_values();
         if (root_element_computed_values.overflow_x() == CSS::Overflow::Visible && root_element_computed_values.overflow_y() == CSS::Overflow::Visible) {
             auto* body_element = root_element.first_child_of_type<HTML::HTMLBodyElement>();
@@ -1131,7 +1160,7 @@ void Document::update_layout()
 
     if (needs_full_style_update || node.child_needs_style_update()) {
         if (node.is_element()) {
-            if (auto* shadow_root = static_cast<DOM::Element&>(node).shadow_root_internal()) {
+            if (auto shadow_root = static_cast<DOM::Element&>(node).shadow_root()) {
                 if (needs_full_style_update || shadow_root->needs_style_update() || shadow_root->child_needs_style_update()) {
                     auto subtree_invalidation = update_style_recursively(*shadow_root, style_computer);
                     if (!is_display_none)
@@ -1309,7 +1338,9 @@ void Document::set_hovered_node(Node* node)
 
     // https://w3c.github.io/uievents/#mouseout
     if (old_hovered_node && old_hovered_node != m_hovered_node) {
-        auto event = UIEvents::MouseEvent::create(realm(), UIEvents::EventNames::mouseout);
+        UIEvents::MouseEventInit mouse_event_init {};
+        mouse_event_init.related_target = m_hovered_node;
+        auto event = UIEvents::MouseEvent::create(realm(), UIEvents::EventNames::mouseout, mouse_event_init);
         old_hovered_node->dispatch_event(event);
     }
 
@@ -1318,13 +1349,17 @@ void Document::set_hovered_node(Node* node)
         // FIXME: Check if we need to dispatch these events in a specific order.
         for (auto target = old_hovered_node; target && target.ptr() != common_ancestor; target = target->parent()) {
             // FIXME: Populate the event with mouse coordinates, etc.
-            target->dispatch_event(UIEvents::MouseEvent::create(realm(), UIEvents::EventNames::mouseleave));
+            UIEvents::MouseEventInit mouse_event_init {};
+            mouse_event_init.related_target = m_hovered_node;
+            target->dispatch_event(UIEvents::MouseEvent::create(realm(), UIEvents::EventNames::mouseleave, mouse_event_init));
         }
     }
 
     // https://w3c.github.io/uievents/#mouseover
     if (m_hovered_node && m_hovered_node != old_hovered_node) {
-        auto event = UIEvents::MouseEvent::create(realm(), UIEvents::EventNames::mouseover);
+        UIEvents::MouseEventInit mouse_event_init {};
+        mouse_event_init.related_target = old_hovered_node;
+        auto event = UIEvents::MouseEvent::create(realm(), UIEvents::EventNames::mouseover, mouse_event_init);
         m_hovered_node->dispatch_event(event);
     }
 
@@ -1333,7 +1368,9 @@ void Document::set_hovered_node(Node* node)
         // FIXME: Check if we need to dispatch these events in a specific order.
         for (auto target = m_hovered_node; target && target.ptr() != common_ancestor; target = target->parent()) {
             // FIXME: Populate the event with mouse coordinates, etc.
-            target->dispatch_event(UIEvents::MouseEvent::create(realm(), UIEvents::EventNames::mouseenter));
+            UIEvents::MouseEventInit mouse_event_init {};
+            mouse_event_init.related_target = old_hovered_node;
+            target->dispatch_event(UIEvents::MouseEvent::create(realm(), UIEvents::EventNames::mouseenter, mouse_event_init));
         }
     }
 }
@@ -1450,6 +1487,14 @@ JS::NonnullGCPtr<HTML::HTMLAllCollection> Document::all()
         });
     }
     return *m_all;
+}
+
+// https://drafts.csswg.org/css-font-loading/#font-source
+JS::NonnullGCPtr<CSS::FontFaceSet> Document::fonts()
+{
+    if (!m_fonts)
+        m_fonts = CSS::FontFaceSet::create(realm());
+    return *m_fonts;
 }
 
 // https://html.spec.whatwg.org/multipage/obsolete.html#dom-document-clear
@@ -1757,7 +1802,7 @@ void Document::adopt_node(Node& node)
 
             // FIXME: 2. If inclusiveDescendant is an element, then set the node document of each attribute in inclusiveDescendant’s
             //           attribute list to document.
-            return IterationDecision::Continue;
+            return TraversalDecision::Continue;
         });
 
         // 2. For each inclusiveDescendant in node’s shadow-including inclusive descendants that is custom,
@@ -1765,7 +1810,7 @@ void Document::adopt_node(Node& node)
         //    and an argument list containing oldDocument and document.
         node.for_each_shadow_including_inclusive_descendant([&](DOM::Node& inclusive_descendant) {
             if (!is<DOM::Element>(inclusive_descendant))
-                return IterationDecision::Continue;
+                return TraversalDecision::Continue;
 
             auto& element = static_cast<DOM::Element&>(inclusive_descendant);
             if (element.is_custom()) {
@@ -1778,14 +1823,14 @@ void Document::adopt_node(Node& node)
                 element.enqueue_a_custom_element_callback_reaction(HTML::CustomElementReactionNames::adoptedCallback, move(arguments));
             }
 
-            return IterationDecision::Continue;
+            return TraversalDecision::Continue;
         });
 
         // 3. For each inclusiveDescendant in node’s shadow-including inclusive descendants, in shadow-including tree order,
         //    run the adopting steps with inclusiveDescendant and oldDocument.
         node.for_each_shadow_including_inclusive_descendant([&](auto& inclusive_descendant) {
             inclusive_descendant.adopted_from(old_document);
-            return IterationDecision::Continue;
+            return TraversalDecision::Continue;
         });
 
         // Transfer NodeIterators rooted at `node` from old_document to this document.
@@ -1951,9 +1996,9 @@ Element* Document::find_a_potential_indicated_element(FlyString const& fragment)
     root().for_each_in_subtree_of_type<Element>([&](Element const& element) {
         if (element.name() == fragment) {
             element_with_name = const_cast<Element*>(&element);
-            return IterationDecision::Break;
+            return TraversalDecision::Break;
         }
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     });
     if (element_with_name)
         return element_with_name;
@@ -1973,7 +2018,12 @@ void Document::dispatch_events_for_animation_if_necessary(JS::NonnullGCPtr<Anima
         return;
 
     auto& css_animation = verify_cast<CSS::CSSAnimation>(*animation);
-    if (auto target = effect->target(); target && target->paintable())
+
+    JS::GCPtr<Element> target = effect->target();
+    if (!target)
+        return;
+
+    if (target->paintable())
         target->paintable()->set_needs_display();
 
     auto previous_phase = effect->previous_phase();
@@ -1993,7 +2043,8 @@ void Document::dispatch_events_for_animation_if_necessary(JS::NonnullGCPtr<Anima
                         css_animation.id(),
                         elapsed_time,
                     }),
-                .target = animation,
+                .animation = css_animation,
+                .target = *target,
                 .scheduled_event_time = HighResolutionTime::unsafe_shared_current_time(),
             });
         };
@@ -2053,10 +2104,13 @@ void Document::dispatch_events_for_animation_if_necessary(JS::NonnullGCPtr<Anima
         }
 
         if (current_phase == Animations::AnimationEffect::Phase::Idle && previous_phase != Animations::AnimationEffect::Phase::Idle && previous_phase != Animations::AnimationEffect::Phase::After) {
-            // FIXME: Use the active time "at the moment it was cancelled"
-            dispatch_event(HTML::EventNames::animationcancel, effect->active_time_using_fill(Bindings::FillMode::Both).value());
+            // FIXME: Calculate a non-zero time when the animation is cancelled by means other than calling cancel()
+            auto cancel_time = animation->release_saved_cancel_time().value_or(0.0);
+            dispatch_event(HTML::EventNames::animationcancel, cancel_time);
         }
     }
+    effect->set_previous_phase(current_phase);
+    effect->set_previous_current_iteration(current_iteration);
 }
 
 // https://html.spec.whatwg.org/multipage/browsing-the-web.html#scroll-to-the-fragment-identifier
@@ -2959,12 +3013,12 @@ Vector<JS::Handle<HTML::Navigable>> Document::descendant_navigables()
             auto& navigable_container = static_cast<HTML::NavigableContainer&>(node);
             // 1. If navigableContainer's content navigable is null, then continue.
             if (!navigable_container.content_navigable())
-                return IterationDecision::Continue;
+                return TraversalDecision::Continue;
 
             // 2. Extend navigables with navigableContainer's content navigable's active document's inclusive descendant navigables.
             navigables.extend(navigable_container.content_navigable()->active_document()->inclusive_descendant_navigables());
         }
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     });
 
     // 4. Return navigables.
@@ -3013,6 +3067,11 @@ Vector<JS::Handle<HTML::Navigable>> Document::ancestor_navigables()
     return ancestors;
 }
 
+Vector<JS::Handle<HTML::Navigable>> const Document::ancestor_navigables() const
+{
+    return const_cast<Document&>(*this).ancestor_navigables();
+}
+
 // https://html.spec.whatwg.org/multipage/document-sequences.html#inclusive-ancestor-navigables
 Vector<JS::Handle<HTML::Navigable>> Document::inclusive_ancestor_navigables()
 {
@@ -3041,10 +3100,10 @@ Vector<JS::Handle<HTML::Navigable>> Document::document_tree_child_navigables()
     for_each_in_subtree_of_type<HTML::NavigableContainer>([&](HTML::NavigableContainer& navigable_container) {
         // 1. If navigableContainer's content navigable is null, then continue.
         if (!navigable_container.content_navigable())
-            return IterationDecision::Continue;
+            return TraversalDecision::Continue;
         // 2. Append navigableContainer's content navigable to navigables.
         navigables.append(*navigable_container.content_navigable());
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     });
 
     // 5. Return navigables.
@@ -3064,8 +3123,9 @@ void Document::run_unloading_cleanup_steps()
     // FIXME: 3. For each WebTransport object transport whose relevant global object is window, run the context cleanup steps given transport.
 
     // 4. If document's salvageable state is false, then:
-    if (m_salvageable) {
-        // FIXME: 1. For each EventSource object eventSource whose relevant global object is equal to window, forcibly close eventSource.
+    if (!m_salvageable) {
+        // 1. For each EventSource object eventSource whose relevant global object is equal to window, forcibly close eventSource.
+        window->forcibly_close_all_event_sources();
 
         // 2. Clear window's map of active timers.
         window->clear_map_of_active_timers();
@@ -3991,8 +4051,11 @@ void Document::shared_declarative_refresh_steps(StringView input, JS::GCPtr<HTML
         if (has_meta_element && has_flag(active_sandboxing_flag_set(), HTML::SandboxingFlagSet::SandboxedAutomaticFeatures))
             return;
 
-        VERIFY(navigable());
-        MUST(navigable()->navigate({ .url = url_record, .source_document = *this }));
+        auto navigable = this->navigable();
+        if (!navigable || navigable->has_been_destroyed())
+            return;
+
+        MUST(navigable->navigate({ .url = url_record, .source_document = *this, .history_handling = Bindings::NavigationHistoryBehavior::Replace }));
     });
 
     // For the purposes of the previous paragraph, a refresh is said to have come due as soon as the later of the
@@ -4179,6 +4242,7 @@ void Document::update_animations_and_send_events(Optional<double> const& timesta
     // - Running the update an animation’s finished state procedure for any animations whose current time has been
     //   updated.
     // - Queueing animation events for any such animations.
+    m_last_animation_frame_timestamp = timestamp;
     for (auto const& timeline : m_associated_animation_timelines)
         timeline->set_current_time(timestamp);
 
@@ -4194,8 +4258,8 @@ void Document::update_animations_and_send_events(Optional<double> const& timesta
 
     // 6. Perform a stable sort of the animation events in events to dispatch as follows:
     auto sort_events_by_composite_order = [](auto const& a, auto const& b) {
-        auto& a_effect = verify_cast<Animations::KeyframeEffect>(*a.target->effect());
-        auto& b_effect = verify_cast<Animations::KeyframeEffect>(*b.target->effect());
+        auto& a_effect = verify_cast<Animations::KeyframeEffect>(*a.animation->effect());
+        auto& b_effect = verify_cast<Animations::KeyframeEffect>(*b.animation->effect());
         return Animations::KeyframeEffect::composite_order(a_effect, b_effect) < 0;
     };
 
@@ -4308,9 +4372,10 @@ void Document::remove_replaced_animations()
             //   timeline with which animation is associated.
             if (auto document = animation->document_for_timing()) {
                 PendingAnimationEvent pending_animation_event {
-                    remove_event,
-                    animation,
-                    animation->timeline()->convert_a_timeline_time_to_an_origin_relative_time(init.timeline_time),
+                    .event = remove_event,
+                    .animation = animation,
+                    .target = animation,
+                    .scheduled_event_time = animation->timeline()->convert_a_timeline_time_to_an_origin_relative_time(init.timeline_time),
                 };
                 document->append_pending_animation_event(pending_animation_event);
             }
@@ -4348,6 +4413,16 @@ void Document::ensure_animation_timer()
     }
 
     m_animation_driver_timer->start();
+}
+
+Vector<JS::NonnullGCPtr<Animations::Animation>> Document::get_animations()
+{
+    Vector<JS::NonnullGCPtr<Animations::Animation>> relevant_animations;
+    for_each_child_of_type<Element>([&](auto& child) {
+        relevant_animations.extend(child.get_animations({ .subtree = true }));
+        return IterationDecision::Continue;
+    });
+    return relevant_animations;
 }
 
 // https://html.spec.whatwg.org/multipage/dom.html#dom-document-nameditem-filter
@@ -4509,9 +4584,9 @@ Element const* Document::element_from_point(double x, double y)
             auto* dom_node = result.dom_node();
             if (dom_node && dom_node->is_element()) {
                 hit_test_result = result;
-                return Painting::TraversalDecision::Break;
+                return TraversalDecision::Break;
             }
-            return Painting::TraversalDecision::Continue;
+            return TraversalDecision::Continue;
         });
     }
     if (hit_test_result.has_value())
@@ -4551,7 +4626,7 @@ Vector<JS::NonnullGCPtr<Element>> Document::elements_from_point(double x, double
             auto* dom_node = result.dom_node();
             if (dom_node && dom_node->is_element())
                 sequence.append(*static_cast<Element*>(dom_node));
-            return Painting::TraversalDecision::Continue;
+            return TraversalDecision::Continue;
         });
     }
 
@@ -4999,6 +5074,97 @@ void Document::process_top_layer_removals()
             element->set_in_top_layer(false);
         }
     }
+}
+
+void Document::set_needs_to_refresh_clip_state(bool b)
+{
+    if (auto* paintable = this->paintable())
+        paintable->set_needs_to_refresh_clip_state(b);
+}
+
+void Document::set_needs_to_refresh_scroll_state(bool b)
+{
+    if (auto* paintable = this->paintable())
+        paintable->set_needs_to_refresh_scroll_state(b);
+}
+
+Vector<JS::Handle<DOM::Range>> Document::find_matching_text(String const& query, CaseSensitivity case_sensitivity)
+{
+    if (!document_element() || !document_element()->layout_node())
+        return {};
+
+    Vector<JS::Handle<DOM::Range>> matches;
+    document_element()->layout_node()->for_each_in_inclusive_subtree_of_type<Layout::TextNode>([&](auto const& text_node) {
+        auto const& text = text_node.text_for_rendering();
+        size_t offset = 0;
+        while (true) {
+            auto match_index = case_sensitivity == CaseSensitivity::CaseInsensitive
+                ? text.find_byte_offset_ignoring_case(query, offset)
+                : text.find_byte_offset(query, offset);
+            if (!match_index.has_value())
+                break;
+
+            auto range = create_range();
+            auto& dom_node = const_cast<DOM::Text&>(text_node.dom_node());
+            (void)range->set_start(dom_node, match_index.value());
+            (void)range->set_end(dom_node, match_index.value() + query.code_points().length());
+
+            matches.append(range);
+            offset = match_index.value() + 1;
+        }
+
+        return TraversalDecision::Continue;
+    });
+
+    return matches;
+}
+
+// https://dom.spec.whatwg.org/#document-allow-declarative-shadow-roots
+bool Document::allow_declarative_shadow_roots() const
+{
+    return m_allow_declarative_shadow_roots;
+}
+
+// https://dom.spec.whatwg.org/#document-allow-declarative-shadow-roots
+void Document::set_allow_declarative_shadow_roots(bool allow)
+{
+    m_allow_declarative_shadow_roots = allow;
+}
+
+// https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#parse-html-from-a-string
+void Document::parse_html_from_a_string(StringView html)
+{
+    // 1. Set document's type to "html".
+    set_document_type(DOM::Document::Type::HTML);
+
+    // 2. Create an HTML parser parser, associated with document.
+    // 3. Place html into the input stream for parser. The encoding confidence is irrelevant.
+    // FIXME: We don't have the concept of encoding confidence yet.
+    auto parser = HTML::HTMLParser::create(*this, html, "UTF-8"sv);
+
+    // 4. Start parser and let it run until it has consumed all the characters just inserted into the input stream.
+    // FIXME: This is to match the default URL. Instead, pass in this's relevant global object's associated Document's URL.
+    parser->run("about:blank"sv);
+}
+
+// https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#dom-parsehtmlunsafe
+JS::NonnullGCPtr<Document> Document::parse_html_unsafe(JS::VM& vm, StringView html)
+{
+    auto& realm = *vm.current_realm();
+    // FIXME: 1. Let compliantHTML to the result of invoking the Get Trusted Type compliant string algorithm with TrustedHTML, this's relevant global object, html, "Document parseHTMLUnsafe", and "script".
+
+    // 2. Let document be a new Document, whose content type is "text/html".
+    JS::NonnullGCPtr<DOM::Document> document = Document::create(realm);
+    document->set_content_type("text/html"_string);
+
+    // 3. Set document's allow declarative shadow roots to true.
+    document->set_allow_declarative_shadow_roots(true);
+
+    // 4. Parse HTML from a string given document and compliantHTML. // FIXME: Use compliantHTML.
+    document->parse_html_from_a_string(html);
+
+    // 5. Return document.
+    return document;
 }
 
 }

@@ -16,7 +16,7 @@
 namespace Web::HTML {
 
 class EventLoop : public JS::Cell {
-    JS_CELL(EventLoop, Cell);
+    JS_CELL(EventLoop, JS::Cell);
     JS_DECLARE_ALLOCATOR(EventLoop);
 
 public:
@@ -39,8 +39,8 @@ public:
     TaskQueue& microtask_queue() { return *m_microtask_queue; }
     TaskQueue const& microtask_queue() const { return *m_microtask_queue; }
 
-    void spin_until(NOESCAPE JS::SafeFunction<bool()> goal_condition);
-    void spin_processing_tasks_with_source_until(Task::Source, NOESCAPE JS::SafeFunction<bool()> goal_condition);
+    void spin_until(JS::SafeFunction<bool()> goal_condition);
+    void spin_processing_tasks_with_source_until(Task::Source, JS::SafeFunction<bool()> goal_condition);
     void process();
 
     // https://html.spec.whatwg.org/multipage/browsing-the-web.html#termination-nesting-level
@@ -116,6 +116,7 @@ private:
 };
 
 EventLoop& main_thread_event_loop();
+int queue_a_task(HTML::Task::Source, JS::GCPtr<EventLoop>, JS::GCPtr<DOM::Document>, JS::NonnullGCPtr<JS::HeapFunction<void()>> steps);
 int queue_global_task(HTML::Task::Source, JS::Object&, JS::NonnullGCPtr<JS::HeapFunction<void()>> steps);
 void queue_a_microtask(DOM::Document const*, JS::NonnullGCPtr<JS::HeapFunction<void()>> steps);
 void perform_a_microtask_checkpoint();

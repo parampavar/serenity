@@ -99,12 +99,13 @@ bool Request::destination_is_script_like() const
 // https://fetch.spec.whatwg.org/#subresource-request
 bool Request::is_subresource_request() const
 {
-    // A subresource request is a request whose destination is "audio", "audioworklet", "font", "image", "manifest", "paintworklet", "script", "style", "track", "video", "xslt", or the empty string.
+    // A subresource request is a request whose destination is "audio", "audioworklet", "font", "image", "json", "manifest", "paintworklet", "script", "style", "track", "video", "xslt", or the empty string.
     static constexpr Array subresource_request_destinations = {
         Destination::Audio,
         Destination::AudioWorklet,
         Destination::Font,
         Destination::Image,
+        Destination::JSON,
         Destination::Manifest,
         Destination::PaintWorklet,
         Destination::Script,
@@ -249,6 +250,7 @@ JS::NonnullGCPtr<Request> Request::clone(JS::Realm& realm) const
     new_request->set_prevent_no_cache_cache_control_header_modification(m_prevent_no_cache_cache_control_header_modification);
     new_request->set_done(m_done);
     new_request->set_timing_allow_failed(m_timing_allow_failed);
+    new_request->set_buffer_policy(m_buffer_policy);
 
     // 2. If request’s body is non-null, set newRequest’s body to the result of cloning request’s body.
     if (auto const* body = m_body.get_pointer<JS::NonnullGCPtr<Body>>())
@@ -433,6 +435,17 @@ StringView request_mode_to_string(Request::Mode mode)
         return "websocket"sv;
     }
     VERIFY_NOT_REACHED();
+}
+
+Optional<Request::Priority> request_priority_from_string(StringView string)
+{
+    if (string.equals_ignoring_ascii_case("high"sv))
+        return Request::Priority::High;
+    if (string.equals_ignoring_ascii_case("low"sv))
+        return Request::Priority::Low;
+    if (string.equals_ignoring_ascii_case("auto"sv))
+        return Request::Priority::Auto;
+    return {};
 }
 
 }

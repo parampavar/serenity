@@ -20,7 +20,7 @@ interface HTMLMediaElement : HTMLElement {
 
     // network state
     [Reflect, CEReactions] attribute DOMString src;
-    // FIXME: attribute MediaProvider? srcObject;
+    [FIXME] attribute MediaProvider? srcObject;
     readonly attribute USVString currentSrc;
     [Reflect=crossorigin, CEReactions, Enumerated=CORSSettingsAttribute] attribute DOMString? crossOrigin;
     const unsigned short NETWORK_EMPTY = 0;
@@ -28,7 +28,7 @@ interface HTMLMediaElement : HTMLElement {
     const unsigned short NETWORK_LOADING = 2;
     const unsigned short NETWORK_NO_SOURCE = 3;
     readonly attribute unsigned short networkState;
-    // FIXME: [CEReactions] attribute DOMString preload;
+    [FIXME, CEReactions] attribute DOMString preload;
     readonly attribute TimeRanges buffered;
     undefined load();
     CanPlayTypeResult canPlayType(DOMString type);
@@ -46,13 +46,13 @@ interface HTMLMediaElement : HTMLElement {
     attribute double currentTime;
     undefined fastSeek(double time);
     readonly attribute unrestricted double duration;
-    // FIXME: object getStartDate();
+    [FIXME] object getStartDate();
     readonly attribute boolean paused;
-    // FIXME: attribute double defaultPlaybackRate;
-    // FIXME: attribute double playbackRate;
-    // FIXME: attribute boolean preservesPitch;
-    // FIXME: readonly attribute TimeRanges played;
-    // FIXME: readonly attribute TimeRanges seekable;
+    [FIXME] attribute double defaultPlaybackRate;
+    [FIXME] attribute double playbackRate;
+    [FIXME] attribute boolean preservesPitch;
+    [FIXME] readonly attribute TimeRanges played;
+    [FIXME] readonly attribute TimeRanges seekable;
     readonly attribute boolean ended;
     [Reflect, CEReactions] attribute boolean autoplay;
     [Reflect, CEReactions] attribute boolean loop;
@@ -68,7 +68,7 @@ interface HTMLMediaElement : HTMLElement {
     // tracks
     [SameObject] readonly attribute AudioTrackList audioTracks;
     [SameObject] readonly attribute VideoTrackList videoTracks;
-    // FIXME: [SameObject] readonly attribute TextTrackList textTracks;
-    // FIXME: TextTrack addTextTrack(TextTrackKind kind, optional DOMString label = "", optional DOMString language = "");
+    [FIXME, SameObject] readonly attribute TextTrackList textTracks;
+    [FIXME] TextTrack addTextTrack(TextTrackKind kind, optional DOMString label = "", optional DOMString language = "");
 
 };

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2024, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2020-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -35,6 +35,14 @@ NonnullGCPtr<Object> Object::create(Realm& realm, Object* prototype)
     if (prototype == realm.intrinsics().object_prototype())
         return realm.heap().allocate<Object>(realm, realm.intrinsics().new_object_shape());
     return realm.heap().allocate<Object>(realm, ConstructWithPrototypeTag::Tag, *prototype);
+}
+
+NonnullGCPtr<Object> Object::create_prototype(Realm& realm, Object* prototype)
+{
+    auto shape = realm.heap().allocate_without_realm<Shape>(realm);
+    if (prototype)
+        shape->set_prototype_without_transition(prototype);
+    return realm.heap().allocate<Object>(realm, shape);
 }
 
 NonnullGCPtr<Object> Object::create_with_premade_shape(Shape& shape)
@@ -800,6 +808,13 @@ ThrowCompletionOr<Optional<PropertyDescriptor>> Object::internal_get_own_propert
     // 3. Let X be O's own property whose key is P.
     auto [value, attributes, property_offset] = *maybe_storage_entry;
 
+    // AD-HOC: Properties with the [[Unimplemented]] attribute are used for reporting unimplemented IDL interfaces.
+    if (attributes.is_unimplemented()) {
+        if (vm().on_unimplemented_property_access)
+            vm().on_unimplemented_property_access(*this, property_key);
+        descriptor.unimplemented = true;
+    }
+
     // 4. If X is a data property, then
     if (!value.is_accessor()) {
         // a. Set D.[[Value]] to the value of X's [[Value]] attribute.
@@ -873,7 +888,7 @@ ThrowCompletionOr<bool> Object::internal_has_property(PropertyKey const& propert
 }
 
 // 10.1.8 [[Get]] ( P, Receiver ), https://tc39.es/ecma262/#sec-ordinary-object-internal-methods-and-internal-slots-get-p-receiver
-ThrowCompletionOr<Value> Object::internal_get(PropertyKey const& property_key, Value receiver, CacheablePropertyMetadata* cacheable_metadata) const
+ThrowCompletionOr<Value> Object::internal_get(PropertyKey const& property_key, Value receiver, CacheablePropertyMetadata* cacheable_metadata, PropertyLookupPhase phase) const
 {
     VERIFY(!receiver.is_empty());
     VERIFY(property_key.is_valid());
@@ -893,17 +908,28 @@ ThrowCompletionOr<Value> Object::internal_get(PropertyKey const& property_key, V
             return js_undefined();
 
         // c. Return ? parent.[[Get]](P, Receiver).
-        return parent->internal_get(property_key, receiver);
+        return parent->internal_get(property_key, receiver, cacheable_metadata, PropertyLookupPhase::PrototypeChain);
     }
 
     // 3. If IsDataDescriptor(desc) is true, return desc.[[Value]].
     if (descriptor->is_data_descriptor()) {
         // Non-standard: If the caller has requested cacheable metadata and the property is an own property, fill it in.
         if (cacheable_metadata && descriptor->property_offset.has_value() && shape().is_cacheable()) {
-            *cacheable_metadata = CacheablePropertyMetadata {
-                .type = CacheablePropertyMetadata::Type::OwnProperty,
-                .property_offset = descriptor->property_offset.value(),
-            };
+            if (phase == PropertyLookupPhase::OwnProperty) {
+                *cacheable_metadata = CacheablePropertyMetadata {
+                    .type = CacheablePropertyMetadata::Type::OwnProperty,
+                    .property_offset = descriptor->property_offset.value(),
+                    .prototype = nullptr,
+                };
+            } else if (phase == PropertyLookupPhase::PrototypeChain) {
+                VERIFY(shape().is_prototype_shape());
+                VERIFY(shape().prototype_chain_validity()->is_valid());
+                *cacheable_metadata = CacheablePropertyMetadata {
+                    .type = CacheablePropertyMetadata::Type::InPrototypeChain,
+                    .property_offset = descriptor->property_offset.value(),
+                    .prototype = this,
+                };
+            }
         }
         return *descriptor->value;
     }
@@ -997,6 +1023,7 @@ ThrowCompletionOr<bool> Object::ordinary_set_with_own_descriptor(PropertyKey con
                 *cacheable_metadata = CacheablePropertyMetadata {
                     .type = CacheablePropertyMetadata::Type::OwnProperty,
                     .property_offset = own_descriptor->property_offset.value(),
+                    .prototype = nullptr,
                 };
             }
 
@@ -1444,6 +1471,13 @@ ThrowCompletionOr<Value> Object::ordinary_to_primitive(Value::PreferredType pref
 
     // 4. Throw a TypeError exception.
     return vm.throw_completion<TypeError>(ErrorType::Convert, "object", preferred_type == Value::PreferredType::String ? "string" : "number");
+}
+
+void Object::convert_to_prototype_if_needed()
+{
+    if (shape().is_prototype_shape())
+        return;
+    set_shape(shape().clone_for_prototype());
 }
 
 }

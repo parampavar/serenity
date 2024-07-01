@@ -64,11 +64,17 @@ public:
 
     void queue_the_performance_observer_task();
 
+    void register_event_source(Badge<EventSource>, JS::NonnullGCPtr<EventSource>);
+    void unregister_event_source(Badge<EventSource>, JS::NonnullGCPtr<EventSource>);
+    void forcibly_close_all_event_sources();
+
     void run_steps_after_a_timeout(i32 timeout, Function<void()> completion_step);
 
     [[nodiscard]] JS::NonnullGCPtr<HighResolutionTime::Performance> performance();
 
     JS::NonnullGCPtr<JS::Object> supported_entry_types() const;
+
+    JS::NonnullGCPtr<IndexedDB::IDBFactory> indexed_db();
 
 protected:
     void initialize(JS::Realm&);
@@ -101,7 +107,11 @@ private:
     // NOTE: See the PerformanceEntryTuple struct above for the map's value tuple.
     OrderedHashMap<FlyString, PerformanceTimeline::PerformanceEntryTuple> m_performance_entry_buffer_map;
 
+    HashTable<JS::NonnullGCPtr<EventSource>> m_registered_event_sources;
+
     JS::GCPtr<HighResolutionTime::Performance> m_performance;
+
+    JS::GCPtr<IndexedDB::IDBFactory> m_indexed_db;
 
     mutable JS::GCPtr<JS::Object> m_supported_entry_types_array;
 };

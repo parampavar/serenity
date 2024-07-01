@@ -21,6 +21,7 @@
 #include <Kernel/Bus/VirtIO/Transport/PCIe/Detect.h>
 #include <Kernel/Devices/Audio/Management.h>
 #include <Kernel/Devices/DeviceManagement.h>
+#include <Kernel/Devices/FUSEDevice.h>
 #include <Kernel/Devices/GPU/Console/BootFramebufferConsole.h>
 #include <Kernel/Devices/GPU/Management.h>
 #include <Kernel/Devices/Generic/DeviceControlDevice.h>
@@ -67,7 +68,7 @@
 #    include <Kernel/Arch/x86_64/Hypervisor/VMWareBackdoor.h>
 #    include <Kernel/Arch/x86_64/Interrupts/APIC.h>
 #    include <Kernel/Arch/x86_64/Interrupts/PIC.h>
-#    include <Kernel/Devices/GPU/Console/VGATextModeConsole.h>
+#    include <Kernel/Arch/x86_64/VGA/TextModeConsole.h>
 #elif ARCH(AARCH64)
 #    include <Kernel/Arch/aarch64/RPi/Framebuffer.h>
 #    include <Kernel/Arch/aarch64/RPi/Mailbox.h>
@@ -97,9 +98,6 @@ extern "C" USB::DriverInitFunction driver_init_table_start[];
 extern "C" USB::DriverInitFunction driver_init_table_end[];
 
 extern "C" u8 end_of_kernel_image[];
-
-multiboot_module_entry_t multiboot_copy_boot_modules_array[16];
-size_t multiboot_copy_boot_modules_count;
 
 READONLY_AFTER_INIT SetOnce g_not_in_early_boot;
 
@@ -151,14 +149,14 @@ READONLY_AFTER_INIT StringView kernel_cmdline;
 READONLY_AFTER_INIT u32 multiboot_flags;
 READONLY_AFTER_INIT multiboot_memory_map_t* multiboot_memory_map;
 READONLY_AFTER_INIT size_t multiboot_memory_map_count;
-READONLY_AFTER_INIT multiboot_module_entry_t* multiboot_modules;
-READONLY_AFTER_INIT size_t multiboot_modules_count;
 READONLY_AFTER_INIT PhysicalAddress multiboot_framebuffer_addr;
 READONLY_AFTER_INIT u32 multiboot_framebuffer_pitch;
 READONLY_AFTER_INIT u32 multiboot_framebuffer_width;
 READONLY_AFTER_INIT u32 multiboot_framebuffer_height;
 READONLY_AFTER_INIT u8 multiboot_framebuffer_bpp;
 READONLY_AFTER_INIT u8 multiboot_framebuffer_type;
+READONLY_AFTER_INIT PhysicalAddress multiboot_module_physical_ptr;
+READONLY_AFTER_INIT size_t multiboot_module_length;
 }
 
 Atomic<Graphics::Console*> g_boot_console;
@@ -187,8 +185,8 @@ extern "C" [[noreturn]] UNMAP_AFTER_INIT NO_SANITIZE_COVERAGE void init([[maybe_
     multiboot_flags = boot_info.multiboot_flags;
     multiboot_memory_map = (multiboot_memory_map_t*)boot_info.multiboot_memory_map;
     multiboot_memory_map_count = boot_info.multiboot_memory_map_count;
-    multiboot_modules = (multiboot_module_entry_t*)boot_info.multiboot_modules;
-    multiboot_modules_count = boot_info.multiboot_modules_count;
+    multiboot_module_physical_ptr = PhysicalAddress { boot_info.multiboot_module_physical_ptr };
+    multiboot_module_length = boot_info.multiboot_module_length;
     multiboot_framebuffer_addr = PhysicalAddress { boot_info.multiboot_framebuffer_addr };
     multiboot_framebuffer_pitch = boot_info.multiboot_framebuffer_pitch;
     multiboot_framebuffer_width = boot_info.multiboot_framebuffer_width;
@@ -217,8 +215,7 @@ extern "C" [[noreturn]] UNMAP_AFTER_INIT NO_SANITIZE_COVERAGE void init([[maybe_
     multiboot_memory_map = mmap;
     multiboot_memory_map_count = 2;
 
-    multiboot_modules = nullptr;
-    multiboot_modules_count = 0;
+    multiboot_module_length = 0;
     // FIXME: Read the /chosen/bootargs property.
     kernel_cmdline = RPi::Mailbox::the().query_kernel_command_line(s_command_line_buffer);
 #elif ARCH(RISCV64)
@@ -234,11 +231,6 @@ extern "C" [[noreturn]] UNMAP_AFTER_INIT NO_SANITIZE_COVERAGE void init([[maybe_
     // We need to copy the command line before kmalloc is initialized,
     // as it may overwrite parts of multiboot!
     CommandLine::early_initialize(kernel_cmdline);
-    if (multiboot_modules_count > 0) {
-        VERIFY(multiboot_modules);
-        memcpy(multiboot_copy_boot_modules_array, multiboot_modules, multiboot_modules_count * sizeof(multiboot_module_entry_t));
-    }
-    multiboot_copy_boot_modules_count = multiboot_modules_count;
 
     new (&bsp_processor()) Processor();
     bsp_processor().early_initialize(0);
@@ -442,6 +434,7 @@ void init_stage2(void*)
     (void)MemoryDevice::must_create().leak_ref();
     (void)ZeroDevice::must_create().leak_ref();
     (void)FullDevice::must_create().leak_ref();
+    (void)FUSEDevice::must_create().leak_ref();
     (void)RandomDevice::must_create().leak_ref();
     (void)SelfTTYDevice::must_create().leak_ref();
     PTYMultiplexer::initialize();
@@ -452,7 +445,7 @@ void init_stage2(void*)
     for (auto* init_function = driver_init_table_start; init_function != driver_init_table_end; init_function++)
         (*init_function)();
 
-    StorageManagement::the().initialize(kernel_command_line().is_force_pio(), kernel_command_line().is_nvme_polling_enabled());
+    StorageManagement::the().initialize(kernel_command_line().is_nvme_polling_enabled());
     for (int i = 0; i < 5; ++i) {
         if (StorageManagement::the().determine_boot_device(kernel_command_line().root_device()))
             break;

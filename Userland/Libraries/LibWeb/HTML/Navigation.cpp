@@ -977,11 +977,11 @@ bool Navigation::inner_navigate_event_firing_algorithm(
     // 10. Let traverseCanBeCanceled be true if all of the following are true:
     //      - navigable is a top-level traversable;
     //      - destination's is same document is true; and
-    //      - either userInvolvement is not "browser UI", or navigation's relevant global object has transient activation.
+    //      - either userInvolvement is not "browser UI", or navigation's relevant global object has history-action activation.
     //     Otherwise, let it be false.
     bool const traverse_can_be_canceled = navigable->is_top_level_traversable()
         && destination->same_document()
-        && (user_involvement != UserNavigationInvolvement::BrowserUI || relevant_global_object.has_transient_activation());
+        && (user_involvement != UserNavigationInvolvement::BrowserUI || relevant_global_object.has_history_action_activation());
 
     // FIXME: Fix spec grammaro, extra 'the -> set'
     // 11. If either:
@@ -1026,11 +1026,13 @@ bool Navigation::inner_navigate_event_firing_algorithm(
     auto current_url = document.url();
 
     // 21. If all of the following are true:
+    //  - event's classic history API state is null;
     //  - destination's is same document is true;
     //  - destination's URL equals currentURL with exclude fragments set to true; and
     //  - destination's URL's fragment is not identical to currentURL's fragment,
     //  then initialize event's hashChange to true. Otherwise, initialize it to false.
-    event_init.hash_change = (destination->same_document()
+    event_init.hash_change = (!classic_history_api_state.has_value()
+        && destination->same_document()
         && destination->raw_url().equals(current_url, URL::ExcludeFragment::Yes)
         && destination->raw_url().fragment() != current_url.fragment());
 
@@ -1070,7 +1072,9 @@ bool Navigation::inner_navigate_event_firing_algorithm(
 
     // 29. If dispatchResult is false:
     if (!dispatch_result) {
-        // FIXME: 1. If navigationType is "traverse", then consume history-action user activation.
+        // 1. If navigationType is "traverse", then consume history-action user activation given navigation's relevant global object.
+        if (navigation_type == Bindings::NavigationType::Traverse)
+            relevant_global_object.consume_history_action_user_activation();
 
         // 2. If event's abort controller's signal is not aborted, then abort the ongoing navigation given navigation.
         if (!event->abort_controller()->signal()->aborted())

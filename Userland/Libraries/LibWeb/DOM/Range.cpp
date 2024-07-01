@@ -18,7 +18,6 @@
 #include <LibWeb/DOM/ProcessingInstruction.h>
 #include <LibWeb/DOM/Range.h>
 #include <LibWeb/DOM/Text.h>
-#include <LibWeb/DOMParsing/InnerHTML.h>
 #include <LibWeb/Geometry/DOMRect.h>
 #include <LibWeb/Geometry/DOMRectList.h>
 #include <LibWeb/HTML/HTMLHtmlElement.h>
@@ -632,7 +631,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<DocumentFragment>> Range::extract()
     // 4. If original start node is original end node and it is a CharacterData node, then:
     if (original_start_node.ptr() == original_end_node.ptr() && is<CharacterData>(*original_start_node)) {
         // 1. Let clone be a clone of original start node.
-        auto clone = original_start_node->clone_node();
+        auto clone = TRY(original_start_node->clone_node());
 
         // 2. Set the data of clone to the result of substringing data with node original start node,
         //    offset original start offset, and count original end offset minus original start offset.
@@ -722,7 +721,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<DocumentFragment>> Range::extract()
     // 15. If first partially contained child is a CharacterData node, then:
     if (first_partially_contained_child && is<CharacterData>(*first_partially_contained_child)) {
         // 1. Let clone be a clone of original start node.
-        auto clone = original_start_node->clone_node();
+        auto clone = TRY(original_start_node->clone_node());
 
         // 2. Set the data of clone to the result of substringing data with node original start node, offset original start offset,
         //    and count original start node’s length minus original start offset.
@@ -738,7 +737,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<DocumentFragment>> Range::extract()
     // 16. Otherwise, if first partially contained child is not null:
     else if (first_partially_contained_child) {
         // 1. Let clone be a clone of first partially contained child.
-        auto clone = first_partially_contained_child->clone_node();
+        auto clone = TRY(first_partially_contained_child->clone_node());
 
         // 2. Append clone to fragment.
         TRY(fragment->append_child(clone));
@@ -761,7 +760,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<DocumentFragment>> Range::extract()
     // 18. If last partially contained child is a CharacterData node, then:
     if (last_partially_contained_child && is<CharacterData>(*last_partially_contained_child)) {
         // 1. Let clone be a clone of original end node.
-        auto clone = original_end_node->clone_node();
+        auto clone = TRY(original_end_node->clone_node());
 
         // 2. Set the data of clone to the result of substringing data with node original end node, offset 0, and count original end offset.
         auto result = TRY(static_cast<CharacterData const&>(*original_end_node).substring_data(0, original_end_offset));
@@ -776,7 +775,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<DocumentFragment>> Range::extract()
     // 19. Otherwise, if last partially contained child is not null:
     else if (last_partially_contained_child) {
         // 1. Let clone be a clone of last partially contained child.
-        auto clone = last_partially_contained_child->clone_node();
+        auto clone = TRY(last_partially_contained_child->clone_node());
 
         // 2. Append clone to fragment.
         TRY(fragment->append_child(clone));
@@ -961,7 +960,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<DocumentFragment>> Range::clone_the_content
     // 4. If original start node is original end node and it is a CharacterData node, then:
     if (original_start_node.ptr() == original_end_node.ptr() && is<CharacterData>(*original_start_node)) {
         // 1. Let clone be a clone of original start node.
-        auto clone = original_start_node->clone_node();
+        auto clone = TRY(original_start_node->clone_node());
 
         // 2. Set the data of clone to the result of substringing data with node original start node,
         //    offset original start offset, and count original end offset minus original start offset.
@@ -1026,7 +1025,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<DocumentFragment>> Range::clone_the_content
     // 13. If first partially contained child is a CharacterData node, then:
     if (first_partially_contained_child && is<CharacterData>(*first_partially_contained_child)) {
         // 1. Let clone be a clone of original start node.
-        auto clone = original_start_node->clone_node();
+        auto clone = TRY(original_start_node->clone_node());
 
         // 2. Set the data of clone to the result of substringing data with node original start node, offset original start offset,
         //    and count original start node’s length minus original start offset.
@@ -1039,7 +1038,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<DocumentFragment>> Range::clone_the_content
     // 14. Otherwise, if first partially contained child is not null:
     else if (first_partially_contained_child) {
         // 1. Let clone be a clone of first partially contained child.
-        auto clone = first_partially_contained_child->clone_node();
+        auto clone = TRY(first_partially_contained_child->clone_node());
 
         // 2. Append clone to fragment.
         TRY(fragment->append_child(clone));
@@ -1057,7 +1056,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<DocumentFragment>> Range::clone_the_content
     // 15. For each contained child in contained children.
     for (auto& contained_child : contained_children) {
         // 1. Let clone be a clone of contained child with the clone children flag set.
-        auto clone = contained_child->clone_node(nullptr, true);
+        auto clone = TRY(contained_child->clone_node(nullptr, true));
 
         // 2. Append clone to fragment.
         TRY(fragment->append_child(move(clone)));
@@ -1066,7 +1065,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<DocumentFragment>> Range::clone_the_content
     // 16. If last partially contained child is a CharacterData node, then:
     if (last_partially_contained_child && is<CharacterData>(*last_partially_contained_child)) {
         // 1. Let clone be a clone of original end node.
-        auto clone = original_end_node->clone_node();
+        auto clone = TRY(original_end_node->clone_node());
 
         // 2. Set the data of clone to the result of substringing data with node original end node, offset 0, and count original end offset.
         auto result = TRY(static_cast<CharacterData const&>(*original_end_node).substring_data(0, original_end_offset));
@@ -1078,7 +1077,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<DocumentFragment>> Range::clone_the_content
     // 17. Otherwise, if last partially contained child is not null:
     else if (last_partially_contained_child) {
         // 1. Let clone be a clone of last partially contained child.
-        auto clone = last_partially_contained_child->clone_node();
+        auto clone = TRY(last_partially_contained_child->clone_node());
 
         // 2. Append clone to fragment.
         TRY(fragment->append_child(clone));
@@ -1178,57 +1177,48 @@ JS::NonnullGCPtr<Geometry::DOMRect> Range::get_bounding_client_rect() const
     return Geometry::DOMRect::construct_impl(realm(), 0, 0, 0, 0).release_value_but_fixme_should_propagate_errors();
 }
 
-// https://w3c.github.io/DOM-Parsing/#dom-range-createcontextualfragment
-WebIDL::ExceptionOr<JS::NonnullGCPtr<DocumentFragment>> Range::create_contextual_fragment(String const& fragment)
+// https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#dom-range-createcontextualfragment
+WebIDL::ExceptionOr<JS::NonnullGCPtr<DocumentFragment>> Range::create_contextual_fragment(String const& string)
 {
-    // 1. Let node be the context object's start node.
+    // FIXME: Let compliantString be the result of invoking the Get Trusted Type compliant string algorithm with TrustedHTML, this's relevant global object, string, and "Range createContextualFragment".
+
+    // 2. Let node be this's start node.
     JS::NonnullGCPtr<Node> node = *start_container();
 
-    // Let element be as follows, depending on node's interface:
-    JS::GCPtr<Element> element;
-    switch (static_cast<NodeType>(node->node_type())) {
-    case NodeType::DOCUMENT_NODE:
-    case NodeType::DOCUMENT_FRAGMENT_NODE:
-        element = nullptr;
-        break;
-    case NodeType::ELEMENT_NODE:
-        element = static_cast<DOM::Element&>(*node);
-        break;
-    case NodeType::TEXT_NODE:
-    case NodeType::COMMENT_NODE:
-        element = node->parent_element();
-        break;
-    case NodeType::DOCUMENT_TYPE_NODE:
-    case NodeType::PROCESSING_INSTRUCTION_NODE:
-        // [DOM4] prevents this case.
-        VERIFY_NOT_REACHED();
-    default:
-        VERIFY_NOT_REACHED();
-    }
+    // 3. Let element be null.
+    JS::GCPtr<Element> element = nullptr;
 
-    // 2. If either element is null or the following are all true:
+    auto node_type = static_cast<NodeType>(node->node_type());
+    // 4. If node implements Element, set element to node.
+    if (node_type == NodeType::ELEMENT_NODE)
+        element = static_cast<DOM::Element&>(*node);
+    // 5. Otherwise, if node implements Text or Comment node, set element to node's parent element.
+    else if (first_is_one_of(node_type, NodeType::TEXT_NODE, NodeType::COMMENT_NODE))
+        element = node->parent_element();
+
+    // 6. If either element is null or all of the following are true:
     //    - element's node document is an HTML document,
-    //    - element's local name is "html", and
+    //    - element's local name is "html"; and
     //    - element's namespace is the HTML namespace;
     if (!element || is<HTML::HTMLHtmlElement>(*element)) {
-        // let element be a new Element with
-        // - "body" as its local name,
-        // - The HTML namespace as its namespace, and
-        // - The context object's node document as its node document.
+        // then set element to the result of creating an element given this's node document,
+        // body, and the HTML namespace.
         element = TRY(DOM::create_element(node->document(), HTML::TagNames::body, Namespace::HTML));
     }
 
-    // 3. Let fragment node be the result of invoking the fragment parsing algorithm with fragment as markup, and element as the context element.
-    auto fragment_node = TRY(DOMParsing::parse_fragment(fragment, *element));
+    // 7. Let fragment node be the result of invoking the fragment parsing algorithm steps with element and compliantString. FIXME: Use compliantString.
+    auto fragment_node = TRY(element->parse_fragment(string));
 
-    // 4. Unmark all scripts in fragment node as "already started" and as "parser-inserted".
+    // 8. For each script of fragment node's script element descendants:
     fragment_node->for_each_in_subtree_of_type<HTML::HTMLScriptElement>([&](HTML::HTMLScriptElement& script_element) {
+        // 8.1 Set scripts already started to false.
         script_element.unmark_as_already_started({});
+        // 8.2 Set scripts parser document to null.
         script_element.unmark_as_parser_inserted({});
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     });
 
-    // 5. Return the value of fragment node.
+    // 5. Return fragment node.
     return fragment_node;
 }
 

@@ -28,8 +28,7 @@
 
 namespace Web::HTML {
 
-class BrowsingContext final : public JS::Cell
-    , public Weakable<BrowsingContext> {
+class BrowsingContext final : public JS::Cell {
     JS_CELL(BrowsingContext, JS::Cell);
     JS_DECLARE_ALLOCATOR(BrowsingContext);
 
@@ -54,47 +53,47 @@ public:
     bool is_familiar_with(BrowsingContext const&) const;
 
     template<typename Callback>
-    IterationDecision for_each_in_inclusive_subtree(Callback callback) const
+    TraversalDecision for_each_in_inclusive_subtree(Callback callback) const
     {
-        if (callback(*this) == IterationDecision::Break)
-            return IterationDecision::Break;
+        if (callback(*this) == TraversalDecision::Break)
+            return TraversalDecision::Break;
         for (auto child = first_child(); child; child = child->next_sibling()) {
-            if (child->for_each_in_inclusive_subtree(callback) == IterationDecision::Break)
-                return IterationDecision::Break;
+            if (child->for_each_in_inclusive_subtree(callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
         }
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     }
 
     template<typename Callback>
-    IterationDecision for_each_in_inclusive_subtree(Callback callback)
+    TraversalDecision for_each_in_inclusive_subtree(Callback callback)
     {
-        if (callback(*this) == IterationDecision::Break)
-            return IterationDecision::Break;
+        if (callback(*this) == TraversalDecision::Break)
+            return TraversalDecision::Break;
         for (auto child = first_child(); child; child = child->next_sibling()) {
-            if (child->for_each_in_inclusive_subtree(callback) == IterationDecision::Break)
-                return IterationDecision::Break;
+            if (child->for_each_in_inclusive_subtree(callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
         }
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     }
 
     template<typename Callback>
-    IterationDecision for_each_in_subtree(Callback callback) const
+    TraversalDecision for_each_in_subtree(Callback callback) const
     {
         for (auto child = first_child(); child; child = child->next_sibling()) {
-            if (child->for_each_in_inclusive_subtree(callback) == IterationDecision::Break)
-                return IterationDecision::Break;
+            if (child->for_each_in_inclusive_subtree(callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
         }
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     }
 
     template<typename Callback>
-    IterationDecision for_each_in_subtree(Callback callback)
+    TraversalDecision for_each_in_subtree(Callback callback)
     {
         for (auto child = first_child(); child; child = child->next_sibling()) {
-            if (child->for_each_in_inclusive_subtree(callback) == IterationDecision::Break)
-                return IterationDecision::Break;
+            if (child->for_each_in_inclusive_subtree(callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
         }
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     }
 
     bool is_top_level() const;

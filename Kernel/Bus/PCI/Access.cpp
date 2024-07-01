@@ -8,7 +8,7 @@
 #include <AK/Error.h>
 #include <AK/HashTable.h>
 #if ARCH(X86_64)
-#    include <Kernel/Arch/x86_64/PCI/Controller/HostBridge.h>
+#    include <Kernel/Arch/x86_64/PCI/Controller/PIIX4HostBridge.h>
 #endif
 #include <Kernel/Bus/PCI/Access.h>
 #include <Kernel/Bus/PCI/Controller/MemoryBackedHostBridge.h>
@@ -79,7 +79,7 @@ UNMAP_AFTER_INIT bool Access::find_and_register_pci_host_bridges_from_acpi_mcfg_
         dbgln("Failed to round up length of {} to pages", length);
         return false;
     }
-    auto mcfg_region_or_error = MM.allocate_kernel_region(mcfg_table.page_base(), region_size_or_error.value(), "PCI Parsing MCFG"sv, Memory::Region::Access::ReadWrite);
+    auto mcfg_region_or_error = MM.allocate_mmio_kernel_region(mcfg_table.page_base(), region_size_or_error.value(), "PCI Parsing MCFG"sv, Memory::Region::Access::ReadWrite);
     if (mcfg_region_or_error.is_error())
         return false;
     auto& mcfg = *(ACPI::Structures::MCFG*)mcfg_region_or_error.value()->vaddr().offset(mcfg_table.offset_in_page()).as_ptr();
@@ -114,7 +114,7 @@ UNMAP_AFTER_INIT bool Access::initialize_for_one_pci_domain()
 {
     VERIFY(!Access::is_initialized());
     auto* access = new Access();
-    auto host_bridge = HostBridge::must_create_with_io_access();
+    auto host_bridge = PIIX4HostBridge::must_create_with_io_access();
     access->add_host_controller(move(host_bridge));
     access->rescan_hardware();
     dbgln_if(PCI_DEBUG, "PCI: access for one PCI domain initialised.");

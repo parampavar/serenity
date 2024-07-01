@@ -15,8 +15,6 @@
 
 namespace Web::HTML {
 
-// FIXME: Should be part of HTML namespace!
-
 class HTMLAllCollection : public Bindings::PlatformObject {
     WEB_PLATFORM_OBJECT(HTMLAllCollection, Bindings::PlatformObject);
     JS_DECLARE_ALLOCATOR(HTMLAllCollection);
@@ -26,7 +24,7 @@ public:
         Children,
         Descendants,
     };
-    [[nodiscard]] static JS::NonnullGCPtr<HTMLAllCollection> create(DOM::ParentNode& root, Scope, Function<bool(DOM::Element const&)> filter);
+    [[nodiscard]] static JS::NonnullGCPtr<HTMLAllCollection> create(DOM::ParentNode& root, Scope, ESCAPING Function<bool(DOM::Element const&)> filter);
 
     virtual ~HTMLAllCollection() override;
 
@@ -42,7 +40,7 @@ public:
     virtual bool is_supported_property_index(u32) const override;
 
 protected:
-    HTMLAllCollection(DOM::ParentNode& root, Scope, Function<bool(DOM::Element const&)> filter);
+    HTMLAllCollection(DOM::ParentNode& root, Scope, ESCAPING Function<bool(DOM::Element const&)> filter);
 
     virtual void initialize(JS::Realm&) override;
 

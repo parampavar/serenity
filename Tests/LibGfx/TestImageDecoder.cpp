@@ -25,6 +25,7 @@
 #include <LibGfx/ImageFormats/QMArithmeticDecoder.h>
 #include <LibGfx/ImageFormats/TGALoader.h>
 #include <LibGfx/ImageFormats/TIFFLoader.h>
+#include <LibGfx/ImageFormats/TIFFMetadata.h>
 #include <LibGfx/ImageFormats/TinyVGLoader.h>
 #include <LibGfx/ImageFormats/WebPLoader.h>
 #include <LibTest/TestCase.h>
@@ -768,6 +769,18 @@ TEST_CASE(test_png)
     TRY_OR_FAIL(expect_single_frame(*plugin_decoder));
 }
 
+TEST_CASE(test_exif)
+{
+    auto file = TRY_OR_FAIL(Core::MappedFile::map(TEST_INPUT("png/exif.png"sv)));
+    EXPECT(Gfx::PNGImageDecoderPlugin::sniff(file->bytes()));
+    auto plugin_decoder = TRY_OR_FAIL(Gfx::PNGImageDecoderPlugin::create(file->bytes()));
+
+    TRY_OR_FAIL(expect_single_frame_of_size(*plugin_decoder, { 100, 200 }));
+    EXPECT(plugin_decoder->metadata().has_value());
+    auto const& exif_metadata = static_cast<Gfx::ExifMetadata const&>(plugin_decoder->metadata().value());
+    EXPECT_EQ(*exif_metadata.orientation(), Gfx::TIFF::Orientation::Rotate90Clockwise);
+}
+
 TEST_CASE(test_png_malformed_frame)
 {
     Array test_inputs = {
@@ -862,6 +875,20 @@ TEST_CASE(test_tiff_ccitt3)
 
     EXPECT_EQ(frame.image->get_pixel(0, 0), Gfx::Color::NamedColor::White);
     EXPECT_EQ(frame.image->get_pixel(60, 75), Gfx::Color::NamedColor::Black);
+}
+
+TEST_CASE(test_tiff_ccitt3_no_tags)
+{
+    auto file = TRY_OR_FAIL(Core::MappedFile::map(TEST_INPUT("tiff/ccitt3_no_tags.tiff"sv)));
+    EXPECT(Gfx::TIFFImageDecoderPlugin::sniff(file->bytes()));
+    auto plugin_decoder = TRY_OR_FAIL(Gfx::TIFFImageDecoderPlugin::create(file->bytes()));
+
+    auto frame = TRY_OR_FAIL(expect_single_frame_of_size(*plugin_decoder, { 6, 4 }));
+
+    EXPECT_EQ(frame.image->get_pixel(0, 0), Gfx::Color::NamedColor::White);
+    EXPECT_EQ(frame.image->get_pixel(3, 0), Gfx::Color::NamedColor::Black);
+    EXPECT_EQ(frame.image->get_pixel(2, 2), Gfx::Color::NamedColor::White);
+    EXPECT_EQ(frame.image->get_pixel(5, 3), Gfx::Color::NamedColor::White);
 }
 
 TEST_CASE(test_tiff_ccitt3_fill)
@@ -1354,9 +1381,9 @@ TEST_CASE(test_webp_extended_lossless_animated)
     EXPECT(Gfx::WebPImageDecoderPlugin::sniff(file->bytes()));
     auto plugin_decoder = TRY_OR_FAIL(Gfx::WebPImageDecoderPlugin::create(file->bytes()));
 
+    EXPECT_EQ(plugin_decoder->loop_count(), 42u);
     EXPECT_EQ(plugin_decoder->frame_count(), 8u);
     EXPECT(plugin_decoder->is_animated());
-    EXPECT_EQ(plugin_decoder->loop_count(), 42u);
 
     EXPECT_EQ(plugin_decoder->size(), Gfx::IntSize(990, 1050));
 

@@ -61,7 +61,7 @@ void HTMLCollection::update_cache_if_needed() const
         m_root->for_each_in_subtree_of_type<Element>([&](auto& element) {
             if (m_filter(element))
                 m_cached_elements.append(element);
-            return IterationDecision::Continue;
+            return TraversalDecision::Continue;
         });
     } else {
         m_root->for_each_child_of_type<Element>([&](auto& element) {
@@ -135,7 +135,7 @@ Vector<FlyString> HTMLCollection::supported_property_names() const
     for (auto const& element : m_cached_elements) {
         // 1. If element has an ID which is not in result, append element’s ID to result.
         if (auto const& id = element->id(); id.has_value()) {
-            if (!result.contains_slow(id.value()))
+            if (!id.value().is_empty() && !result.contains_slow(id.value()))
                 result.append(id.value());
         }
 

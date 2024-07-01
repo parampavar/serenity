@@ -207,6 +207,13 @@ if (HACKSTUDIO_BUILD)
     return()
 endif()
 
+add_library(GenericClangPlugin INTERFACE)
+add_library(JSClangPlugin INTERFACE)
+if (ENABLE_CLANG_PLUGINS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang$")
+    target_link_libraries(GenericClangPlugin INTERFACE Lagom::GenericClangPlugin)
+    target_link_libraries(JSClangPlugin INTERFACE Lagom::JSClangPlugin)
+endif()
+
 add_subdirectory(AK)
 add_subdirectory(Kernel)
 

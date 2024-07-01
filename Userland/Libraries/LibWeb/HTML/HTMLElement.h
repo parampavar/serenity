@@ -68,10 +68,14 @@ public:
     // https://html.spec.whatwg.org/multipage/forms.html#category-label
     virtual bool is_labelable() const { return false; }
 
+    JS::GCPtr<DOM::NodeList> labels();
+
     virtual Optional<ARIA::Role> default_role() const override;
 
     String get_an_elements_target() const;
     TokenizedFeature::NoOpener get_an_elements_noopener(StringView target) const;
+
+    WebIDL::ExceptionOr<JS::NonnullGCPtr<ElementInternals>> attach_internals();
 
 protected:
     HTMLElement(DOM::Document&, DOM::QualifiedName);
@@ -92,6 +96,11 @@ private:
     [[nodiscard]] String get_the_text_steps();
 
     JS::GCPtr<DOMStringMap> m_dataset;
+
+    JS::GCPtr<DOM::NodeList> m_labels;
+
+    // https://html.spec.whatwg.org/multipage/custom-elements.html#attached-internals
+    JS::GCPtr<ElementInternals> m_attached_internals;
 
     enum class ContentEditableState {
         True,

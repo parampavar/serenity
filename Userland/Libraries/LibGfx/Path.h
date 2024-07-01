@@ -9,9 +9,11 @@
 #include <AK/ByteString.h>
 #include <AK/Optional.h>
 #include <AK/Vector.h>
+#include <LibGfx/CornerRadius.h>
 #include <LibGfx/Forward.h>
 #include <LibGfx/Line.h>
 #include <LibGfx/Point.h>
+#include <LibGfx/Quad.h>
 #include <LibGfx/Rect.h>
 
 namespace Gfx {
@@ -183,6 +185,15 @@ public:
         elliptical_arc_to(point, { radius, radius }, 0, large_arc, sweep);
     }
 
+    void rect(FloatRect const& rect)
+    {
+        return quad(rect);
+    }
+
+    void rounded_rect(FloatRect const& rect, CornerRadius top_left, CornerRadius top_right, CornerRadius bottom_right, CornerRadius bottom_left);
+
+    void quad(FloatQuad const& quad);
+
     void text(Utf8View, Font const&);
 
     FloatPoint last_point()
@@ -201,6 +212,8 @@ public:
 
     Path copy_transformed(AffineTransform const&) const;
 
+    void transform(AffineTransform const&);
+
     ReadonlySpan<FloatLine> split_lines() const
     {
         if (!m_split_lines.has_value()) {
@@ -216,12 +229,12 @@ public:
         return m_split_lines->bounding_box;
     }
 
-    void append_path(Path const& path)
-    {
-        m_commands.extend(path.m_commands);
-        m_points.extend(path.m_points);
-        invalidate_split_lines();
-    }
+    enum class AppendRelativeToLastPoint {
+        Yes,
+        No
+    };
+
+    void append_path(Path const& path, AppendRelativeToLastPoint = AppendRelativeToLastPoint::No);
 
     ByteString to_byte_string() const;
 

@@ -31,6 +31,11 @@ void CSSStyleDeclaration::initialize(JS::Realm& realm)
     WEB_SET_PROTOTYPE_FOR_INTERFACE(CSSStyleDeclaration);
 }
 
+JS::GCPtr<CSSRule> CSSStyleDeclaration::parent_rule() const
+{
+    return nullptr;
+}
+
 JS::NonnullGCPtr<PropertyOwningCSSStyleDeclaration> PropertyOwningCSSStyleDeclaration::create(JS::Realm& realm, Vector<StyleProperty> properties, HashMap<FlyString, StyleProperty> custom_properties)
 {
     return realm.heap().allocate<PropertyOwningCSSStyleDeclaration>(realm, realm, move(properties), move(custom_properties));
@@ -46,6 +51,7 @@ PropertyOwningCSSStyleDeclaration::PropertyOwningCSSStyleDeclaration(JS::Realm& 
 void PropertyOwningCSSStyleDeclaration::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
+    visitor.visit(m_parent_rule);
     for (auto& property : m_properties) {
         if (property.value->is_image())
             property.value->as_image().visit_edges(visitor);
@@ -409,15 +415,15 @@ JS::ThrowCompletionOr<bool> CSSStyleDeclaration::internal_has_property(JS::Prope
     return property_id_from_name(name.to_string()) != CSS::PropertyID::Invalid;
 }
 
-JS::ThrowCompletionOr<JS::Value> CSSStyleDeclaration::internal_get(JS::PropertyKey const& name, JS::Value receiver, JS::CacheablePropertyMetadata* cacheable_metadata) const
+JS::ThrowCompletionOr<JS::Value> CSSStyleDeclaration::internal_get(JS::PropertyKey const& name, JS::Value receiver, JS::CacheablePropertyMetadata* cacheable_metadata, PropertyLookupPhase phase) const
 {
     if (name.is_number())
         return { JS::PrimitiveString::create(vm(), item(name.as_number())) };
     if (!name.is_string())
-        return Base::internal_get(name, receiver, cacheable_metadata);
+        return Base::internal_get(name, receiver, cacheable_metadata, phase);
     auto property_id = property_id_from_name(name.to_string());
     if (property_id == CSS::PropertyID::Invalid)
-        return Base::internal_get(name, receiver, cacheable_metadata);
+        return Base::internal_get(name, receiver, cacheable_metadata, phase);
     if (auto maybe_property = property(property_id); maybe_property.has_value())
         return { JS::PrimitiveString::create(vm(), maybe_property->value->to_string()) };
     return { JS::PrimitiveString::create(vm(), String {}) };
@@ -480,6 +486,16 @@ WebIDL::ExceptionOr<void> ElementInlineCSSStyleDeclaration::set_css_text(StringV
     update_style_attribute();
 
     return {};
+}
+
+JS::GCPtr<CSSRule> PropertyOwningCSSStyleDeclaration::parent_rule() const
+{
+    return m_parent_rule;
+}
+
+void PropertyOwningCSSStyleDeclaration::set_parent_rule(JS::NonnullGCPtr<CSSRule> rule)
+{
+    m_parent_rule = rule;
 }
 
 }

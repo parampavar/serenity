@@ -1,11 +1,14 @@
 set(TEST_SOURCES
     BenchmarkGfxPainter.cpp
     BenchmarkJPEGLoader.cpp
+    TestColor.cpp
     TestDeltaE.cpp
     TestFontHandling.cpp
     TestGfxBitmap.cpp
     TestICCProfile.cpp
     TestImageDecoder.cpp
+    TestImageWriter.cpp
+    TestMedianCut.cpp
     TestPainter.cpp
     TestParseISOBMFF.cpp
     TestRect.cpp

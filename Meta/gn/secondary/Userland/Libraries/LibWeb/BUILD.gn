@@ -64,7 +64,6 @@ compiled_action("generate_window_or_worker_interfaces") {
   inputs = standard_idl_files + iterable_idl_files + namespace_idl_files +
            global_idl_files
   outputs = [
-    "$target_gen_dir/Bindings/Forward.h",
     "$target_gen_dir/Bindings/IntrinsicDefinitions.cpp",
     "$target_gen_dir/Bindings/DedicatedWorkerExposedInterfaces.cpp",
     "$target_gen_dir/Bindings/DedicatedWorkerExposedInterfaces.h",
@@ -90,23 +89,6 @@ compiled_action("generate_aria_roles") {
   outputs = [
     "$target_gen_dir/ARIA/AriaRoles.h",
     "$target_gen_dir/ARIA/AriaRoles.cpp",
-  ]
-  args = [
-    "-h",
-    rebase_path(outputs[0], root_build_dir),
-    "-c",
-    rebase_path(outputs[1], root_build_dir),
-    "-j",
-    rebase_path(inputs[0], root_build_dir),
-  ]
-}
-
-compiled_action("generate_css_easing_functions") {
-  tool = "//Meta/Lagom/Tools/CodeGenerators/LibWeb:GenerateCSSEasingFunctions"
-  inputs = [ "CSS/EasingFunctions.json" ]
-  outputs = [
-    "$target_gen_dir/CSS/EasingFunctions.h",
-    "$target_gen_dir/CSS/EasingFunctions.cpp",
   ]
   args = [
     "-h",
@@ -271,7 +253,6 @@ source_set("all_generated") {
     ":WebWorkerClientEndpoint",
     ":WebWorkerServerEndpoint",
     ":generate_aria_roles",
-    ":generate_css_easing_functions",
     ":generate_css_enums",
     ":generate_css_math_functions",
     ":generate_css_media_feature_id",
@@ -327,6 +308,7 @@ shared_library("LibWeb") {
            "Geometry",
            "HTML",
            "HighResolutionTime",
+           "IndexedDB",
            "Infra",
            "Internals",
            "IntersectionObserver",
@@ -334,6 +316,7 @@ shared_library("LibWeb") {
            "Loader",
            "MathML",
            "MimeSniff",
+           "MixedContent",
            "NavigationTiming",
            "Page",
            "Painting",
@@ -351,6 +334,7 @@ shared_library("LibWeb") {
            "UIEvents",
            "UserTiming",
            "WebAssembly",
+           "WebAudio",
            "WebDriver",
            "WebGL",
            "WebIDL",

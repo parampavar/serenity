@@ -56,6 +56,8 @@ Tab::Tab(BrowserWindow* window, WebContentOptions const& web_content_options, St
     m_layout->setContentsMargins(0, 0, 0, 0);
 
     m_view = new WebContentView(this, web_content_options, webdriver_content_ipc_path, parent_client, page_index);
+    m_find_in_page = new FindInPageWidget(this, m_view);
+    m_find_in_page->setVisible(false);
     m_toolbar = new QToolBar(this);
     m_location_edit = new LocationEdit(this);
 
@@ -70,6 +72,15 @@ Tab::Tab(BrowserWindow* window, WebContentOptions const& web_content_options, St
 
     m_layout->addWidget(m_toolbar);
     m_layout->addWidget(m_view);
+    m_layout->addWidget(m_find_in_page);
+
+    m_hamburger_button = new QToolButton(m_toolbar);
+    m_hamburger_button->setText("Show &Menu");
+    m_hamburger_button->setToolTip("Show Menu");
+    m_hamburger_button->setIcon(create_tvg_icon_with_theme_colors("hamburger", palette()));
+    m_hamburger_button->setPopupMode(QToolButton::InstantPopup);
+    m_hamburger_button->setMenu(&m_window->hamburger_menu());
+    m_hamburger_button->setStyleSheet(":menu-indicator {image: none}");
 
     recreate_toolbar_icons();
 
@@ -80,10 +91,17 @@ Tab::Tab(BrowserWindow* window, WebContentOptions const& web_content_options, St
     m_toolbar->addAction(&m_window->reload_action());
     m_toolbar->addWidget(m_location_edit);
     m_toolbar->addAction(&m_window->new_tab_action());
+    m_hamburger_button_action = m_toolbar->addWidget(m_hamburger_button);
     m_toolbar->setIconSize({ 16, 16 });
     // This is a little awkward, but without this Qt shrinks the button to the size of the icon.
     // Note: toolButtonStyle="0" -> ToolButtonIconOnly.
     m_toolbar->setStyleSheet("QToolButton[toolButtonStyle=\"0\"]{width:24px;height:24px}");
+
+    m_hamburger_button_action->setVisible(!Settings::the()->show_menubar());
+
+    QObject::connect(Settings::the(), &Settings::show_menubar_changed, this, [this](bool show_menubar) {
+        m_hamburger_button_action->setVisible(!show_menubar);
+    });
 
     m_reset_zoom_button = new QToolButton(m_toolbar);
     m_reset_zoom_button->setToolButtonStyle(Qt::ToolButtonTextOnly);
@@ -872,7 +890,11 @@ void Tab::resizeEvent(QResizeEvent* event)
 void Tab::update_hover_label()
 {
     m_hover_label->resize(QFontMetrics(m_hover_label->font()).boundingRect(m_hover_label->text()).adjusted(-4, -2, 4, 2).size());
-    m_hover_label->move(6, height() - m_hover_label->height() - 8);
+    auto hover_label_height = height() - m_hover_label->height() - 8;
+    if (m_find_in_page->isVisible())
+        hover_label_height -= m_find_in_page->height() - 4;
+
+    m_hover_label->move(6, hover_label_height);
     m_hover_label->raise();
 }
 
@@ -898,6 +920,7 @@ void Tab::recreate_toolbar_icons()
     m_window->go_forward_action().setIcon(create_tvg_icon_with_theme_colors("forward", palette()));
     m_window->reload_action().setIcon(create_tvg_icon_with_theme_colors("reload", palette()));
     m_window->new_tab_action().setIcon(create_tvg_icon_with_theme_colors("new_tab", palette()));
+    m_hamburger_button->setIcon(create_tvg_icon_with_theme_colors("hamburger", palette()));
 }
 
 void Tab::show_inspector_window(InspectorTarget inspector_target)
@@ -915,6 +938,12 @@ void Tab::show_inspector_window(InspectorTarget inspector_target)
         m_inspector_widget->select_hovered_node();
     else
         m_inspector_widget->select_default_node();
+}
+
+void Tab::show_find_in_page()
+{
+    m_find_in_page->setVisible(true);
+    m_find_in_page->setFocus();
 }
 
 void Tab::close_sub_widgets()

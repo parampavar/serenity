@@ -35,6 +35,9 @@ public:
     double current_time() const { return m_current_time; }
     Bindings::AudioContextState state() const { return m_control_thread_state; }
 
+    // https://webaudio.github.io/web-audio-api/#--nyquist-frequency
+    float nyquist_frequency() const { return m_sample_rate / 2; }
+
     void set_onstatechange(WebIDL::CallbackType*);
     WebIDL::CallbackType* onstatechange();
 
@@ -44,10 +47,13 @@ public:
 
     static WebIDL::ExceptionOr<void> verify_audio_options_inside_nominal_range(JS::Realm&, WebIDL::UnsignedLong number_of_channels, WebIDL::UnsignedLong length, float sample_rate);
 
+    WebIDL::ExceptionOr<JS::NonnullGCPtr<AudioBuffer>> create_buffer(WebIDL::UnsignedLong number_of_channels, WebIDL::UnsignedLong length, float sample_rate);
     WebIDL::ExceptionOr<JS::NonnullGCPtr<OscillatorNode>> create_oscillator();
+    WebIDL::ExceptionOr<JS::NonnullGCPtr<DynamicsCompressorNode>> create_dynamics_compressor();
+    JS::NonnullGCPtr<GainNode> create_gain();
 
 protected:
-    explicit BaseAudioContext(JS::Realm&);
+    explicit BaseAudioContext(JS::Realm&, float m_sample_rate = 0);
 
     virtual void initialize(JS::Realm&) override;
 

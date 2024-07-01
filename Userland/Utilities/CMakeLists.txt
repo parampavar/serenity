@@ -2,12 +2,12 @@ file(GLOB CMD_SOURCES  CONFIGURE_DEPENDS "*.cpp")
 list(APPEND SPECIAL_TARGETS test install)
 list(APPEND REQUIRED_TARGETS
     arp base64 basename cat chmod chown clear comm cp cut date dd df diff dirname dmesg du echo env expr false
-    file find grep groups gunzip head host hostname id ifconfig kill killall ln logout ls mkdir mount mv network-settings nproc
+    file find grep groups head host hostname id ifconfig init kill killall ln logout ls mkdir mount mv network-settings nproc
     patch pgrep pidof ping pkill pmap ps readlink realpath reboot rm rmdir sed route seq shutdown sleep sort stat stty su tail test
     touch tr true umount uname uniq uptime w wc which whoami xargs yes
 )
 list(APPEND RECOMMENDED_TARGETS
-    aconv adjtime aplay abench asctl bt checksum chres cksum copy fortune gzip init install keymap lsirq lsof lspci lzcat man mkfs.fat mknod mktemp
+    aconv adjtime aplay abench asctl bt checksum chres cksum copy fortune gzip install keymap lsirq lsof lspci lzcat man mkfs.fat mknod mktemp
     nc netstat notify ntpquery open passwd pixelflut pls printf pro shot strings tar tt unzip wallpaper xzcat zip
 )
 
@@ -70,10 +70,13 @@ endif()
 install(CODE "file(CREATE_LINK grep ${CMAKE_INSTALL_PREFIX}/bin/egrep SYMBOLIC)")
 install(CODE "file(CREATE_LINK grep ${CMAKE_INSTALL_PREFIX}/bin/fgrep SYMBOLIC)")
 install(CODE "file(CREATE_LINK grep ${CMAKE_INSTALL_PREFIX}/bin/rgrep SYMBOLIC)")
-install(CODE "file(CREATE_LINK gunzip ${CMAKE_INSTALL_PREFIX}/bin/zcat SYMBOLIC)")
+install(CODE "file(CREATE_LINK gzip ${CMAKE_INSTALL_PREFIX}/bin/gunzip SYMBOLIC)")
+install(CODE "file(CREATE_LINK gzip ${CMAKE_INSTALL_PREFIX}/bin/zcat SYMBOLIC)")
+install(CODE "file(CREATE_LINK /usr/lib/Loader.so ${CMAKE_INSTALL_PREFIX}/bin/ldd SYMBOLIC)")
 
 target_link_libraries(abench PRIVATE LibAudio LibFileSystem)
 target_link_libraries(aconv PRIVATE LibAudio LibFileSystem)
+target_link_libraries(animation PRIVATE LibGfx)
 target_link_libraries(aplay PRIVATE LibAudio LibFileSystem LibIPC)
 target_link_libraries(asctl PRIVATE LibAudio LibIPC)
 target_link_libraries(bt PRIVATE LibSymbolication LibURL)
@@ -87,9 +90,11 @@ target_link_libraries(cp PRIVATE LibFileSystem)
 target_link_libraries(cpp-lexer PRIVATE LibCpp)
 target_link_libraries(cpp-parser PRIVATE LibCpp)
 target_link_libraries(cpp-preprocessor PRIVATE LibCpp)
+target_link_libraries(crypto-bench PRIVATE LibCrypto)
 target_link_libraries(diff PRIVATE LibDiff)
 target_link_libraries(disasm PRIVATE LibELF LibX86)
 target_link_libraries(drain PRIVATE LibFileSystem)
+target_link_libraries(elfdeps PRIVATE LibELF)
 target_link_libraries(expr PRIVATE LibRegex)
 target_link_libraries(fdtdump PRIVATE LibDeviceTree)
 target_link_libraries(file PRIVATE LibELF LibGfx LibIPC LibArchive LibCompress LibAudio)
@@ -98,7 +103,6 @@ target_link_libraries(functrace PRIVATE LibDebug LibELF LibX86)
 target_link_libraries(glsl-compiler PRIVATE LibGLSL)
 target_link_libraries(gml-format PRIVATE LibGUI)
 target_link_libraries(grep PRIVATE LibFileSystem LibRegex LibURL)
-target_link_libraries(gunzip PRIVATE LibCompress)
 target_link_libraries(gzip PRIVATE LibCompress)
 target_link_libraries(headless-browser PRIVATE LibCrypto LibFileSystem LibGemini LibGfx LibHTTP LibImageDecoderClient LibTLS LibWeb LibWebView LibWebSocket LibIPC LibJS LibDiff LibURL)
 target_link_libraries(icc PRIVATE LibGfx LibVideo LibURL)
@@ -109,7 +113,6 @@ target_link_libraries(install-bin PRIVATE LibFileSystem)
 target_link_libraries(isobmff PRIVATE LibGfx)
 target_link_libraries(js PRIVATE LibCrypto LibJS LibLine LibLocale LibTextCodec)
 target_link_libraries(keymap PRIVATE LibKeyboard)
-target_link_libraries(ldd PRIVATE LibELF)
 target_link_libraries(less PRIVATE LibLine)
 target_link_libraries(ls PRIVATE LibFileSystem LibURL)
 target_link_libraries(lspci PRIVATE LibPCIDB)
@@ -141,6 +144,7 @@ target_link_libraries(run-tests PRIVATE LibCoredump LibDebug LibELF LibFileSyste
 target_link_libraries(rm PRIVATE LibFileSystem)
 target_link_libraries(sed PRIVATE LibRegex LibFileSystem)
 target_link_libraries(shot PRIVATE LibFileSystem LibGfx LibGUI LibIPC LibURL)
+target_link_libraries(shred PRIVATE LibFileSystem)
 target_link_libraries(slugify PRIVATE LibUnicode)
 target_link_libraries(sql PRIVATE LibFileSystem LibIPC LibLine LibSQL)
 target_link_libraries(su PRIVATE LibCrypt)

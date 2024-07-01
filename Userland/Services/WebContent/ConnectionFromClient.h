@@ -32,7 +32,7 @@ class ConnectionFromClient final
     C_OBJECT(ConnectionFromClient);
 
 public:
-    ~ConnectionFromClient() override = default;
+    ~ConnectionFromClient() override;
 
     virtual void die() override;
 
@@ -129,6 +129,10 @@ private:
 
     virtual Messages::WebContentServer::GetSelectedTextResponse get_selected_text(u64 page_id) override;
     virtual void select_all(u64 page_id) override;
+
+    virtual void find_in_page(u64 page_id, String const& query, CaseSensitivity) override;
+    virtual void find_in_page_next_match(u64 page_id) override;
+    virtual void find_in_page_previous_match(u64 page_id) override;
 
     virtual void paste(u64 page_id, String const& text) override;
 

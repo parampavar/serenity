@@ -178,11 +178,19 @@ public:
 
     bool pdf_viewer_supported() const { return m_pdf_viewer_supported; }
 
+    void clear_selection();
+
+    void find_in_page(String const& query, CaseSensitivity);
+    void find_in_page_next_match();
+    void find_in_page_previous_match();
+
 private:
     explicit Page(JS::NonnullGCPtr<PageClient>);
     virtual void visit_edges(Visitor&) override;
 
     JS::GCPtr<HTML::HTMLMediaElement> media_context_menu_element();
+
+    void update_find_in_page_selection();
 
     JS::NonnullGCPtr<PageClient> m_client;
 
@@ -225,6 +233,8 @@ private:
     // Spec Note: This value also impacts the navigation processing model.
     // FIXME: Actually support pdf viewing
     bool m_pdf_viewer_supported { false };
+    size_t m_find_in_page_match_index { 0 };
+    Vector<JS::NonnullGCPtr<DOM::Range>> m_find_in_page_matches;
 };
 
 struct PaintOptions {
@@ -247,6 +257,7 @@ public:
     virtual DevicePixelRect screen_rect() const = 0;
     virtual double device_pixels_per_css_pixel() const = 0;
     virtual CSS::PreferredColorScheme preferred_color_scheme() const = 0;
+    virtual void paint_next_frame() = 0;
     virtual void paint(DevicePixelRect const&, Gfx::Bitmap&, PaintOptions = {}) = 0;
     virtual void page_did_change_title(ByteString const&) { }
     virtual void page_did_change_url(URL::URL const&) { }

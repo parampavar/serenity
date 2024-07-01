@@ -50,11 +50,7 @@ Heap::Heap(VM& vm)
     gc_perf_string_id = perf_register_string(gc_signpost_string.characters_without_null_termination(), gc_signpost_string.length());
 #endif
 
-    if constexpr (HeapBlock::min_possible_cell_size <= 16) {
-        m_size_based_cell_allocators.append(make<CellAllocator>(16));
-    }
-    static_assert(HeapBlock::min_possible_cell_size <= 24, "Heap Cell tracking uses too much data!");
-    m_size_based_cell_allocators.append(make<CellAllocator>(32));
+    static_assert(HeapBlock::min_possible_cell_size <= 32, "Heap Cell tracking uses too much data!");
     m_size_based_cell_allocators.append(make<CellAllocator>(64));
     m_size_based_cell_allocators.append(make<CellAllocator>(96));
     m_size_based_cell_allocators.append(make<CellAllocator>(128));
@@ -336,7 +332,7 @@ NO_SANITIZE_ADDRESS void Heap::gather_conservative_roots(HashMap<Cell*, HeapRoot
 
     dbgln_if(HEAP_DEBUG, "gather_conservative_roots:");
 
-    jmp_buf buf;
+    jmp_buf buf {};
     setjmp(buf);
 
     HashMap<FlatPtr, HeapRoot> possible_pointers;

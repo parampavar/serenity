@@ -56,8 +56,9 @@ public:
         return names;
     }
 
+    ThrowCompletionOr<void> initialize_binding_direct(VM&, size_t index, Value, InitializeBindingHint);
     ThrowCompletionOr<void> set_mutable_binding_direct(VM&, size_t index, Value, bool strict);
-    ThrowCompletionOr<Value> get_binding_value_direct(VM&, size_t index, bool strict);
+    ThrowCompletionOr<Value> get_binding_value_direct(VM&, size_t index) const;
 
     void shrink_to_fit();
 
@@ -69,7 +70,7 @@ public:
     [[nodiscard]] u64 environment_serial_number() const { return m_environment_serial_number; }
 
 private:
-    ThrowCompletionOr<Value> get_binding_value_direct(VM&, Binding&, bool strict);
+    ThrowCompletionOr<Value> get_binding_value_direct(VM&, Binding const&) const;
     ThrowCompletionOr<void> set_mutable_binding_direct(VM&, Binding&, Value, bool strict);
 
     friend Completion dispose_resources(VM&, GCPtr<DeclarativeEnvironment>, Completion);
@@ -125,13 +126,26 @@ protected:
     }
 
 private:
-    virtual bool is_declarative_environment() const override { return true; }
-
     Vector<Binding> m_bindings;
     Vector<DisposableResource> m_disposable_resource_stack;
 
     u64 m_environment_serial_number { 0 };
 };
+
+inline ThrowCompletionOr<Value> DeclarativeEnvironment::get_binding_value_direct(VM& vm, size_t index) const
+{
+    return get_binding_value_direct(vm, m_bindings[index]);
+}
+
+inline ThrowCompletionOr<Value> DeclarativeEnvironment::get_binding_value_direct(VM&, Binding const& binding) const
+{
+    // 2. If the binding for N in envRec is an uninitialized binding, throw a ReferenceError exception.
+    if (!binding.initialized)
+        return vm().throw_completion<ReferenceError>(ErrorType::BindingNotInitialized, binding.name);
+
+    // 3. Return the value currently bound to N in envRec.
+    return binding.value;
+}
 
 template<>
 inline bool Environment::fast_is<DeclarativeEnvironment>() const { return is_declarative_environment(); }

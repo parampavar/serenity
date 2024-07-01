@@ -25,6 +25,7 @@ namespace AttributeNames {
     __ENUMERATE_HTML_ATTRIBUTE(alt)                        \
     __ENUMERATE_HTML_ATTRIBUTE(archive)                    \
     __ENUMERATE_HTML_ATTRIBUTE(async)                      \
+    __ENUMERATE_HTML_ATTRIBUTE(as)                         \
     __ENUMERATE_HTML_ATTRIBUTE(autocomplete)               \
     __ENUMERATE_HTML_ATTRIBUTE(autofocus)                  \
     __ENUMERATE_HTML_ATTRIBUTE(autoplay)                   \
@@ -67,6 +68,7 @@ namespace AttributeNames {
     __ENUMERATE_HTML_ATTRIBUTE(enctype)                    \
     __ENUMERATE_HTML_ATTRIBUTE(event)                      \
     __ENUMERATE_HTML_ATTRIBUTE(face)                       \
+    __ENUMERATE_HTML_ATTRIBUTE(fetchpriority)              \
     __ENUMERATE_HTML_ATTRIBUTE(for_)                       \
     __ENUMERATE_HTML_ATTRIBUTE(form)                       \
     __ENUMERATE_HTML_ATTRIBUTE(formaction)                 \
@@ -92,6 +94,7 @@ namespace AttributeNames {
     __ENUMERATE_HTML_ATTRIBUTE(is)                         \
     __ENUMERATE_HTML_ATTRIBUTE(ismap)                      \
     __ENUMERATE_HTML_ATTRIBUTE(itemscope)                  \
+    __ENUMERATE_HTML_ATTRIBUTE(kind)                       \
     __ENUMERATE_HTML_ATTRIBUTE(label)                      \
     __ENUMERATE_HTML_ATTRIBUTE(lang)                       \
     __ENUMERATE_HTML_ATTRIBUTE(language)                   \
@@ -222,6 +225,10 @@ namespace AttributeNames {
     __ENUMERATE_HTML_ATTRIBUTE(scheme)                     \
     __ENUMERATE_HTML_ATTRIBUTE(scrolling)                  \
     __ENUMERATE_HTML_ATTRIBUTE(selected)                   \
+    __ENUMERATE_HTML_ATTRIBUTE(shadowrootclonable)         \
+    __ENUMERATE_HTML_ATTRIBUTE(shadowrootdelegatesfocus)   \
+    __ENUMERATE_HTML_ATTRIBUTE(shadowrootmode)             \
+    __ENUMERATE_HTML_ATTRIBUTE(shadowrootserializable)     \
     __ENUMERATE_HTML_ATTRIBUTE(shape)                      \
     __ENUMERATE_HTML_ATTRIBUTE(size)                       \
     __ENUMERATE_HTML_ATTRIBUTE(sizes)                      \

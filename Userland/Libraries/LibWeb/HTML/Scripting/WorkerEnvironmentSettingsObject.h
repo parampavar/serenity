@@ -14,7 +14,7 @@ namespace Web::HTML {
 
 class WorkerEnvironmentSettingsObject final
     : public EnvironmentSettingsObject {
-    JS_CELL(WindowEnvironmentSettingsObject, EnvironmentSettingsObject);
+    JS_CELL(WorkerEnvironmentSettingsObject, EnvironmentSettingsObject);
     JS_DECLARE_ALLOCATOR(WorkerEnvironmentSettingsObject);
 
 public:
@@ -30,18 +30,16 @@ public:
 
     JS::GCPtr<DOM::Document> responsible_document() override { return nullptr; }
     String api_url_character_encoding() override { return m_api_url_character_encoding; }
-    URL::URL api_base_url() override { return m_url; }
-    Origin origin() override { return m_origin; }
-    PolicyContainer policy_container() override { return m_policy_container; }
-    CanUseCrossOriginIsolatedAPIs cross_origin_isolated_capability() override { return CanUseCrossOriginIsolatedAPIs::No; }
+    URL::URL api_base_url() override;
+    Origin origin() override;
+    PolicyContainer policy_container() override;
+    CanUseCrossOriginIsolatedAPIs cross_origin_isolated_capability() override;
 
 private:
     virtual void visit_edges(JS::Cell::Visitor&) override;
 
     String m_api_url_character_encoding;
-    URL::URL m_url;
     HTML::Origin m_origin;
-    HTML::PolicyContainer m_policy_container;
 
     JS::NonnullGCPtr<WorkerGlobalScope> m_global_scope;
 };

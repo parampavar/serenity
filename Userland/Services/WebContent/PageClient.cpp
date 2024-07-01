@@ -37,12 +37,18 @@
 namespace WebContent {
 
 static bool s_use_gpu_painter = false;
+static bool s_use_experimental_cpu_transform_support = false;
 
 JS_DEFINE_ALLOCATOR(PageClient);
 
 void PageClient::set_use_gpu_painter()
 {
     s_use_gpu_painter = true;
+}
+
+void PageClient::set_use_experimental_cpu_transform_support()
+{
+    s_use_experimental_cpu_transform_support = true;
 }
 
 JS::NonnullGCPtr<PageClient> PageClient::create(JS::VM& vm, PageHost& page_host, u64 id)
@@ -57,23 +63,6 @@ PageClient::PageClient(PageHost& owner, u64 id)
 {
     setup_palette();
 
-    m_repaint_timer = Web::Platform::Timer::create_single_shot(0, [this] {
-        if (!m_backing_stores.back_bitmap) {
-            return;
-        }
-
-        auto& back_bitmap = *m_backing_stores.back_bitmap;
-        auto viewport_rect = page().css_to_device_rect(page().top_level_traversable()->viewport_rect());
-        paint(viewport_rect, back_bitmap);
-
-        auto& backing_stores = m_backing_stores;
-        swap(backing_stores.front_bitmap, backing_stores.back_bitmap);
-        swap(backing_stores.front_bitmap_id, backing_stores.back_bitmap_id);
-
-        m_paint_state = PaintState::WaitingForClient;
-        client().async_did_paint(m_id, viewport_rect.to_type<int>(), backing_stores.front_bitmap_id);
-    });
-
 #ifdef HAS_ACCELERATED_GRAPHICS
     if (s_use_gpu_painter) {
         auto context = AccelGfx::Context::create();
@@ -86,15 +75,14 @@ PageClient::PageClient(PageHost& owner, u64 id)
 #endif
 }
 
+PageClient::~PageClient() = default;
+
 void PageClient::schedule_repaint()
 {
     if (m_paint_state != PaintState::Ready) {
         m_paint_state = PaintState::PaintWhenReady;
         return;
     }
-
-    if (!m_repaint_timer->is_active())
-        m_repaint_timer->start();
 }
 
 bool PageClient::is_ready_to_paint() const
@@ -145,8 +133,8 @@ void PageClient::setup_palette()
     VERIFY(!buffer_or_error.is_error());
     auto buffer = buffer_or_error.release_value();
     auto* theme = buffer.data<Gfx::SystemTheme>();
-    theme->color[(int)Gfx::ColorRole::Window] = Color::Magenta;
-    theme->color[(int)Gfx::ColorRole::WindowText] = Color::Cyan;
+    theme->color[to_underlying(Gfx::ColorRole::Window)] = Color(Color::Magenta).value();
+    theme->color[to_underlying(Gfx::ColorRole::WindowText)] = Color(Color::Cyan).value();
     m_palette_impl = Gfx::PaletteImpl::create_with_anonymous_buffer(buffer);
 }
 
@@ -197,6 +185,24 @@ Web::Layout::Viewport* PageClient::layout_root()
     return document->layout_node();
 }
 
+void PageClient::paint_next_frame()
+{
+    if (!m_backing_stores.back_bitmap) {
+        return;
+    }
+
+    auto& back_bitmap = *m_backing_stores.back_bitmap;
+    auto viewport_rect = page().css_to_device_rect(page().top_level_traversable()->viewport_rect());
+    paint(viewport_rect, back_bitmap);
+
+    auto& backing_stores = m_backing_stores;
+    swap(backing_stores.front_bitmap, backing_stores.back_bitmap);
+    swap(backing_stores.front_bitmap_id, backing_stores.back_bitmap_id);
+
+    m_paint_state = PaintState::WaitingForClient;
+    client().async_did_paint(m_id, viewport_rect.to_type<int>(), backing_stores.front_bitmap_id);
+}
+
 void PageClient::paint(Web::DevicePixelRect const& content_rect, Gfx::Bitmap& target, Web::PaintOptions paint_options)
 {
     Web::Painting::CommandList painting_commands;
@@ -224,7 +230,7 @@ void PageClient::paint(Web::DevicePixelRect const& content_rect, Gfx::Bitmap& ta
         }
 #endif
     } else {
-        Web::Painting::CommandExecutorCPU painting_command_executor(target);
+        Web::Painting::CommandExecutorCPU painting_command_executor(target, s_use_experimental_cpu_transform_support);
         painting_commands.execute(painting_command_executor);
     }
 }

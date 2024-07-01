@@ -13,12 +13,30 @@ namespace Web::WebAudio {
 
 JS_DEFINE_ALLOCATOR(AudioParam);
 
+AudioParam::AudioParam(JS::Realm& realm, float default_value, float min_value, float max_value, Bindings::AutomationRate automation_rate)
+    : Bindings::PlatformObject(realm)
+    , m_current_value(default_value)
+    , m_default_value(default_value)
+    , m_min_value(min_value)
+    , m_max_value(max_value)
+    , m_automation_rate(automation_rate)
+{
+}
+
+JS::NonnullGCPtr<AudioParam> AudioParam::create(JS::Realm& realm, float default_value, float min_value, float max_value, Bindings::AutomationRate automation_rate)
+{
+    return realm.vm().heap().allocate<AudioParam>(realm, realm, default_value, min_value, max_value, automation_rate);
+}
+
 AudioParam::~AudioParam() = default;
 
 // https://webaudio.github.io/web-audio-api/#dom-audioparam-value
+// https://webaudio.github.io/web-audio-api/#simple-nominal-range
 float AudioParam::value() const
 {
-    return m_current_value;
+    // Each AudioParam includes minValue and maxValue attributes that together form the simple nominal range
+    // for the parameter. In effect, value of the parameter is clamped to the range [minValue, maxValue].
+    return clamp(m_current_value, min_value(), max_value());
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-audioparam-value

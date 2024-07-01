@@ -28,6 +28,7 @@ class AudioBuffer final : public Bindings::PlatformObject {
     JS_DECLARE_ALLOCATOR(AudioBuffer);
 
 public:
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<AudioBuffer>> create(JS::Realm&, WebIDL::UnsignedLong number_of_channels, WebIDL::UnsignedLong length, float sample_rate);
     static WebIDL::ExceptionOr<JS::NonnullGCPtr<AudioBuffer>> construct_impl(JS::Realm&, AudioBufferOptions const&);
 
     virtual ~AudioBuffer() override;
@@ -38,7 +39,7 @@ public:
     WebIDL::UnsignedLong number_of_channels() const;
     WebIDL::ExceptionOr<JS::NonnullGCPtr<JS::Float32Array>> get_channel_data(WebIDL::UnsignedLong channel) const;
     WebIDL::ExceptionOr<void> copy_from_channel(JS::Handle<WebIDL::BufferSource> const&, WebIDL::UnsignedLong channel_number, WebIDL::UnsignedLong buffer_offset = 0) const;
-    WebIDL::ExceptionOr<void> copy_to_channel(JS::Handle<WebIDL::BufferSource>&, WebIDL::UnsignedLong channel_number, WebIDL::UnsignedLong buffer_offset = 0) const;
+    WebIDL::ExceptionOr<void> copy_to_channel(JS::Handle<WebIDL::BufferSource> const&, WebIDL::UnsignedLong channel_number, WebIDL::UnsignedLong buffer_offset = 0);
 
 private:
     explicit AudioBuffer(JS::Realm&, AudioBufferOptions const&);

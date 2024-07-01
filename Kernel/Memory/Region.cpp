@@ -12,6 +12,7 @@
 #include <Kernel/Interrupts/InterruptDisabler.h>
 #include <Kernel/Library/Panic.h>
 #include <Kernel/Memory/AnonymousVMObject.h>
+#include <Kernel/Memory/MMIOVMObject.h>
 #include <Kernel/Memory/MemoryManager.h>
 #include <Kernel/Memory/Region.h>
 #include <Kernel/Memory/SharedInodeVMObject.h>
@@ -210,7 +211,19 @@ ErrorOr<void> Region::set_should_cow(size_t page_index, bool cow)
     return {};
 }
 
-bool Region::map_individual_page_impl(size_t page_index, RefPtr<PhysicalPage> page)
+bool Region::map_individual_page_impl(size_t page_index, RefPtr<PhysicalRAMPage> page)
+{
+    if (!page)
+        return map_individual_page_impl(page_index, {}, false, false);
+    return map_individual_page_impl(page_index, page->paddr(), is_readable(), is_writable() && !page->is_shared_zero_page() && !page->is_lazy_committed_page());
+}
+
+bool Region::map_individual_page_impl(size_t page_index, PhysicalAddress paddr)
+{
+    return map_individual_page_impl(page_index, paddr, is_readable(), is_writable());
+}
+
+bool Region::map_individual_page_impl(size_t page_index, PhysicalAddress paddr, bool readable, bool writeable)
 {
     VERIFY(m_page_directory->get_lock().is_locked_by_current_processor());
 
@@ -225,18 +238,15 @@ bool Region::map_individual_page_impl(size_t page_index, RefPtr<PhysicalPage> pa
     if (!pte)
         return false;
 
-    if (!page || (!is_readable() && !is_writable())) {
+    if (!readable && !writeable) {
         pte->clear();
         return true;
     }
 
     pte->set_cache_disabled(!m_cacheable);
-    pte->set_physical_page_base(page->paddr().get());
+    pte->set_physical_page_base(paddr.get());
     pte->set_present(true);
-    if (page->is_shared_zero_page() || page->is_lazy_committed_page() || should_cow(page_index))
-        pte->set_writable(false);
-    else
-        pte->set_writable(is_writable());
+    pte->set_writable(writeable && !should_cow(page_index));
     if (Processor::current().has_nx())
         pte->set_execute_disabled(!is_executable());
     if (Processor::current().has_pat())
@@ -248,7 +258,7 @@ bool Region::map_individual_page_impl(size_t page_index, RefPtr<PhysicalPage> pa
 
 bool Region::map_individual_page_impl(size_t page_index)
 {
-    RefPtr<PhysicalPage> page;
+    RefPtr<PhysicalRAMPage> page;
     {
         SpinlockLocker vmobject_locker(vmobject().m_lock);
         page = physical_page(page_index);
@@ -257,7 +267,7 @@ bool Region::map_individual_page_impl(size_t page_index)
     return map_individual_page_impl(page_index, page);
 }
 
-bool Region::remap_vmobject_page(size_t page_index, NonnullRefPtr<PhysicalPage> physical_page)
+bool Region::remap_vmobject_page(size_t page_index, NonnullRefPtr<PhysicalRAMPage> physical_page)
 {
     SpinlockLocker page_lock(m_page_directory->get_lock());
 
@@ -323,10 +333,34 @@ ErrorOr<void> Region::map(PageDirectory& page_directory, ShouldFlushTLB should_f
     return ENOMEM;
 }
 
+ErrorOr<void> Region::map(PageDirectory& page_directory, PhysicalAddress paddr, ShouldFlushTLB should_flush_tlb)
+{
+    SpinlockLocker page_lock(page_directory.get_lock());
+    set_page_directory(page_directory);
+    size_t page_index = 0;
+    while (page_index < page_count()) {
+        if (!map_individual_page_impl(page_index, paddr))
+            break;
+        ++page_index;
+        paddr = paddr.offset(PAGE_SIZE);
+    }
+    if (page_index > 0) {
+        if (should_flush_tlb == ShouldFlushTLB::Yes)
+            MemoryManager::flush_tlb(m_page_directory, vaddr(), page_index);
+        if (page_index == page_count())
+            return {};
+    }
+    return ENOMEM;
+}
+
 void Region::remap()
 {
     VERIFY(m_page_directory);
-    auto result = map(*m_page_directory);
+    ErrorOr<void> result;
+    if (m_vmobject->is_mmio())
+        result = map(*m_page_directory, static_cast<MMIOVMObject const&>(*m_vmobject).base_address());
+    else
+        result = map(*m_page_directory);
     if (result.is_error())
         TODO();
 }
@@ -458,7 +492,7 @@ PageFaultResponse Region::handle_fault(PageFault const& fault)
 #endif
 }
 
-PageFaultResponse Region::handle_zero_fault(size_t page_index_in_region, PhysicalPage& page_in_slot_at_time_of_fault)
+PageFaultResponse Region::handle_zero_fault(size_t page_index_in_region, PhysicalRAMPage& page_in_slot_at_time_of_fault)
 {
     VERIFY(vmobject().is_anonymous());
 
@@ -468,10 +502,9 @@ PageFaultResponse Region::handle_zero_fault(size_t page_index_in_region, Physica
     if (current_thread != nullptr)
         current_thread->did_zero_fault();
 
-    RefPtr<PhysicalPage> new_physical_page;
+    RefPtr<PhysicalRAMPage> new_physical_page;
 
     if (page_in_slot_at_time_of_fault.is_lazy_committed_page()) {
-        VERIFY(m_vmobject->is_anonymous());
         new_physical_page = static_cast<AnonymousVMObject&>(*m_vmobject).allocate_committed_page({});
         dbgln_if(PAGE_FAULT_DEBUG, "      >> ALLOCATED COMMITTED {}", new_physical_page->paddr());
     } else {
@@ -607,14 +640,14 @@ PageFaultResponse Region::handle_inode_fault(size_t page_index_in_region)
     return PageFaultResponse::Continue;
 }
 
-RefPtr<PhysicalPage> Region::physical_page(size_t index) const
+RefPtr<PhysicalRAMPage> Region::physical_page(size_t index) const
 {
     SpinlockLocker vmobject_locker(vmobject().m_lock);
     VERIFY(index < page_count());
     return vmobject().physical_pages()[first_page_index() + index];
 }
 
-RefPtr<PhysicalPage>& Region::physical_page_slot(size_t index)
+RefPtr<PhysicalRAMPage>& Region::physical_page_slot(size_t index)
 {
     VERIFY(vmobject().m_lock.is_locked_by_current_processor());
     VERIFY(index < page_count());

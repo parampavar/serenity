@@ -54,6 +54,8 @@ enum class ParseError {
     InvalidType,
     HugeAllocationRequested,
     OutOfMemory,
+    SectionSizeMismatch,
+    InvalidUtf8,
     // FIXME: This should not exist!
     NotImplemented,
 };
@@ -80,7 +82,7 @@ template<typename T>
 struct GenericIndexParser {
     static ParseResult<T> parse(Stream& stream)
     {
-        auto value_or_error = stream.read_value<LEB128<size_t>>();
+        auto value_or_error = stream.read_value<LEB128<u32>>();
         if (value_or_error.is_error())
             return with_eof_check(stream, ParseError::ExpectedIndex);
         size_t value = value_or_error.release_value();
@@ -256,6 +258,11 @@ public:
 
     auto min() const { return m_min; }
     auto& max() const { return m_max; }
+    bool is_subset_of(Limits other) const
+    {
+        return m_min >= other.min()
+            && (!other.max().has_value() || (m_max.has_value() && *m_max <= *other.max()));
+    }
 
     static ParseResult<Limits> parse(Stream& stream);
 
@@ -557,10 +564,8 @@ public:
         template<typename T>
         static ParseResult<Import> parse_with_type(auto&& stream, auto&& module, auto&& name)
         {
-            auto result = T::parse(stream);
-            if (result.is_error())
-                return result.error();
-            return Import { module.release_value(), name.release_value(), result.release_value() };
+            auto result = TRY(T::parse(stream));
+            return Import { module, name, result };
         }
 
         ByteString m_module;
@@ -797,44 +802,6 @@ public:
     struct Declarative {
     };
     struct Passive {
-    };
-
-    struct SegmentType0 {
-        static ParseResult<SegmentType0> parse(Stream& stream);
-
-        Vector<FunctionIndex> function_indices;
-        Active mode;
-    };
-    struct SegmentType1 {
-        static ParseResult<SegmentType1> parse(Stream& stream);
-
-        Vector<FunctionIndex> function_indices;
-    };
-    struct SegmentType2 {
-        // FIXME: Implement me!
-        static ParseResult<SegmentType2> parse(Stream& stream);
-    };
-    struct SegmentType3 {
-        // FIXME: Implement me!
-        static ParseResult<SegmentType3> parse(Stream& stream);
-    };
-    struct SegmentType4 {
-        static ParseResult<SegmentType4> parse(Stream& stream);
-
-        Active mode;
-        Vector<Expression> initializer;
-    };
-    struct SegmentType5 {
-        // FIXME: Implement me!
-        static ParseResult<SegmentType5> parse(Stream& stream);
-    };
-    struct SegmentType6 {
-        // FIXME: Implement me!
-        static ParseResult<SegmentType6> parse(Stream& stream);
-    };
-    struct SegmentType7 {
-        // FIXME: Implement me!
-        static ParseResult<SegmentType7> parse(Stream& stream);
     };
 
     struct Element {

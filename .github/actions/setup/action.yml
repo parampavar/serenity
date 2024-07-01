@@ -13,11 +13,6 @@ inputs:
 runs:
   using: "composite"
   steps:
-    # Set default Python to python 3.x, and set Python path such that pip install works properly
-    - uses: actions/setup-python@v5
-      with:
-        python-version: '3.x'
-
     - name: 'Install Dependencies'
       if: ${{ inputs.os == 'Linux' }}
       shell: bash
@@ -27,21 +22,25 @@ runs:
         # Packages below aren't.
 
         set -e
-        sudo apt-get purge -y clang-13 clang-14 clang-15 gcc-10 gcc-11 gcc-12
+
         wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
         sudo add-apt-repository 'deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-18 main'
+
+        sudo add-apt-repository ppa:ubuntu-toolchain-r/test
+
         sudo apt-get update
-        sudo apt-get install ccache clang-18 clang++-18 lld-18 clang-format-18 ninja-build unzip qt6-base-dev qt6-tools-dev-tools libqt6svg6-dev qt6-multimedia-dev libgl1-mesa-dev libpulse-dev libssl-dev libegl1-mesa-dev
+        sudo apt-get install ccache clang-18 clang++-18 clang-format-18 lld-18 gcc-13 g++-13 libstdc++-13-dev ninja-build unzip qt6-base-dev qt6-tools-dev-tools libqt6svg6-dev qt6-multimedia-dev libgl1-mesa-dev libpulse-dev libssl-dev libegl1-mesa-dev
 
         sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
         sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
         sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 100
         sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 100
 
-        wget https://github.com/WebAssembly/wabt/releases/download/1.0.23/wabt-1.0.23-ubuntu.tar.gz
-        tar -xzf ./wabt-1.0.23-ubuntu.tar.gz
-        rm ./wabt-1.0.23-ubuntu.tar.gz
-        
+        wget https://github.com/WebAssembly/wabt/releases/download/1.0.35/wabt-1.0.35-ubuntu-20.04.tar.gz
+        tar -xzf ./wabt-1.0.35-ubuntu-20.04.tar.gz
+        rm ./wabt-1.0.35-ubuntu-20.04.tar.gz
+        echo "${{ github.workspace }}/wabt-1.0.35/bin" >> $GITHUB_PATH
+
     - name: 'Install JS dependencies'
       if: ${{ inputs.os == 'Linux' || inputs.os == 'Serenity' }}
       shell: bash
@@ -50,21 +49,24 @@ runs:
     - name: 'Install Python dependencies'
       if: ${{ inputs.os == 'Linux' || inputs.os == 'Serenity' }}
       shell: bash
-      # The setup-python action set default python to python3.x. Note that we are not using system python here.
       run: |
-        python -m pip install --upgrade pip
-        pip install flake8 requests
+        python3 -m pip install --upgrade pip
+        pip3 install flake8 requests six
 
     - name: 'Install Dependencies'
       if: ${{ inputs.os == 'Serenity' }}
       shell: bash
       run: |
         set -e
+
         wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
         sudo add-apt-repository 'deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-18 main'
+
+        sudo add-apt-repository ppa:ubuntu-toolchain-r/test
+
         sudo apt-get update
         sudo apt-get install clang-format-18 ccache e2fsprogs gcc-13 g++-13 libstdc++-13-dev libmpfr-dev libmpc-dev ninja-build optipng qemu-utils qemu-system-i386 unzip generate-ninja libegl1-mesa-dev
-        
+
         if ${{ inputs.arch == 'aarch64' }}; then
             # FIXME: Remove this when we no longer build our own Qemu binary.
             sudo apt-get install libgtk-3-dev libpixman-1-dev libsdl2-dev libslirp-dev
@@ -83,4 +85,5 @@ runs:
       shell: bash
       run: |
         set -e
+        brew update
         brew install coreutils bash ninja wabt ccache unzip qt llvm@18

@@ -71,6 +71,9 @@ void PaintableBox::set_scroll_offset(CSSPixelPoint offset)
     if (!scrollable_overflow_rect.has_value())
         return;
 
+    document().set_needs_to_refresh_clip_state(true);
+    document().set_needs_to_refresh_scroll_state(true);
+
     auto max_x_offset = scrollable_overflow_rect->width() - content_size().width();
     auto max_y_offset = scrollable_overflow_rect->height() - content_size().height();
     offset.set_x(clamp(offset.x(), 0, max_x_offset));
@@ -306,7 +309,7 @@ void PaintableBox::paint(PaintContext& context, PaintPhase phase) const
             border_radius_data.inflate(outline_data->top.width + outline_offset_y, outline_data->right.width + outline_offset_x, outline_data->bottom.width + outline_offset_y, outline_data->left.width + outline_offset_x);
             borders_rect.inflate(outline_data->top.width + outline_offset_y, outline_data->right.width + outline_offset_x, outline_data->bottom.width + outline_offset_y, outline_data->left.width + outline_offset_x);
 
-            context.recording_painter().paint_borders(context.rounded_device_rect(borders_rect), border_radius_data.as_corners(context), outline_data->to_device_pixels(context));
+            paint_all_borders(context.recording_painter(), context.rounded_device_rect(borders_rect), border_radius_data.as_corners(context), outline_data->to_device_pixels(context));
         }
     }
 
@@ -387,7 +390,7 @@ void PaintableBox::paint_border(PaintContext& context) const
         .bottom = box_model().border.bottom == 0 ? CSS::BorderData() : computed_values().border_bottom(),
         .left = box_model().border.left == 0 ? CSS::BorderData() : computed_values().border_left(),
     };
-    context.recording_painter().paint_borders(context.rounded_device_rect(absolute_border_box_rect()), normalized_border_radii_data().as_corners(context), borders_data.to_device_pixels(context));
+    paint_all_borders(context.recording_painter(), context.rounded_device_rect(absolute_border_box_rect()), normalized_border_radii_data().as_corners(context), borders_data.to_device_pixels(context));
 }
 
 void PaintableBox::paint_backdrop_filter(PaintContext& context) const
@@ -499,17 +502,15 @@ void PaintableBox::clear_clip_overflow_rect(PaintContext& context, PaintPhase ph
 
     if (m_clipping_overflow) {
         m_clipping_overflow = false;
-        auto const& combined_transform = combined_css_transform();
         auto const& border_radii_clips = this->border_radii_clips();
-        for (size_t corner_clip_index = 0; corner_clip_index < border_radii_clips.size(); ++corner_clip_index) {
+        for (int corner_clip_index = border_radii_clips.size() - 1; corner_clip_index >= 0; --corner_clip_index) {
             auto const& corner_clip = border_radii_clips[corner_clip_index];
             auto corners = corner_clip.radii.as_corners(context);
             if (!corners.has_any_radius())
                 continue;
             auto corner_clipper_id = m_corner_clipper_ids[corner_clip_index];
             m_corner_clipper_ids[corner_clip_index] = corner_clipper_id;
-            auto rect = corner_clip.rect.translated(-combined_transform.translation().to_type<CSSPixels>());
-            context.recording_painter().blit_corner_clipping(corner_clipper_id, context.rounded_device_rect(rect).to_type<int>());
+            context.recording_painter().blit_corner_clipping(corner_clipper_id);
         }
         context.recording_painter().restore();
     }
@@ -673,14 +674,13 @@ void PaintableWithLines::paint(PaintContext& context, PaintPhase phase) const
         clip_box.intersect(get_clip_rect().value());
         should_clip_overflow = true;
     }
-    if (enclosing_scroll_frame_offset().has_value())
-        clip_box.translate_by(enclosing_scroll_frame_offset().value());
     if (should_clip_overflow) {
         context.recording_painter().save();
         // FIXME: Handle overflow-x and overflow-y being different values.
-        context.recording_painter().add_clip_rect(context.rounded_device_rect(clip_box).to_type<int>());
-        auto scroll_offset = context.rounded_device_point(this->scroll_offset());
-        context.recording_painter().translate(-scroll_offset.to_type<int>());
+        auto clip_box_with_enclosing_scroll_frame_offset = clip_box;
+        if (enclosing_scroll_frame_offset().has_value())
+            clip_box_with_enclosing_scroll_frame_offset.translate_by(enclosing_scroll_frame_offset().value());
+        context.recording_painter().add_clip_rect(context.rounded_device_rect(clip_box_with_enclosing_scroll_frame_offset).to_type<int>());
 
         auto border_radii = normalized_border_radii_data(ShrinkRadiiForBorders::Yes);
         CornerRadii corner_radii {
@@ -693,6 +693,10 @@ void PaintableWithLines::paint(PaintContext& context, PaintPhase phase) const
             corner_clip_id = context.allocate_corner_clipper_id();
             context.recording_painter().sample_under_corners(*corner_clip_id, corner_radii, context.rounded_device_rect(clip_box).to_type<int>(), CornerClip::Outside);
         }
+
+        context.recording_painter().save();
+        auto scroll_offset = context.rounded_device_point(this->scroll_offset());
+        context.recording_painter().translate(-scroll_offset.to_type<int>());
     }
 
     // Text shadows
@@ -721,9 +725,10 @@ void PaintableWithLines::paint(PaintContext& context, PaintPhase phase) const
     if (should_clip_overflow) {
         context.recording_painter().restore();
         if (corner_clip_id.has_value()) {
-            context.recording_painter().blit_corner_clipping(*corner_clip_id, clip_box.to_type<int>());
+            context.recording_painter().blit_corner_clipping(*corner_clip_id);
             corner_clip_id = {};
         }
+        context.recording_painter().restore();
     }
 }
 
@@ -731,6 +736,11 @@ bool PaintableBox::handle_mousewheel(Badge<EventHandler>, CSSPixelPoint, unsigne
 {
     if (!layout_box().is_user_scrollable())
         return false;
+
+    // TODO: Vertical and horizontal scroll overflow should be handled seperately.
+    if (!has_scrollable_overflow())
+        return false;
+
     scroll_by(wheel_delta_x, wheel_delta_y);
     return true;
 }
@@ -789,9 +799,9 @@ Optional<HitTestResult> PaintableBox::hit_test(CSSPixelPoint position, HitTestTy
     (void)PaintableBox::hit_test(position, type, [&](HitTestResult candidate) {
         VERIFY(!result.has_value());
         if (!candidate.paintable->visible_for_hit_testing())
-            return Painting::TraversalDecision::Continue;
+            return TraversalDecision::Continue;
         result = move(candidate);
-        return Painting::TraversalDecision::Break;
+        return TraversalDecision::Break;
     });
     return result;
 }
@@ -861,6 +871,43 @@ void PaintableBox::set_needs_display() const
 {
     if (auto navigable = this->navigable())
         navigable->set_needs_display(absolute_rect());
+}
+
+Optional<CSSPixelRect> PaintableBox::get_masking_area() const
+{
+    // FIXME: Support clip-paths with transforms.
+    if (!combined_css_transform().is_identity_or_translation())
+        return {};
+    auto clip_path = computed_values().clip_path();
+    // FIXME: Support other clip sources.
+    if (!clip_path.has_value() || !clip_path->is_basic_shape())
+        return {};
+    // FIXME: Support other geometry boxes. See: https://drafts.fxtf.org/css-masking/#typedef-geometry-box
+    return absolute_border_box_rect();
+}
+
+Optional<Gfx::Bitmap::MaskKind> PaintableBox::get_mask_type() const
+{
+    // Always an alpha mask as only basic shapes are supported right now.
+    return Gfx::Bitmap::MaskKind::Alpha;
+}
+
+RefPtr<Gfx::Bitmap> PaintableBox::calculate_mask(PaintContext& context, CSSPixelRect const& masking_area) const
+{
+    VERIFY(computed_values().clip_path()->is_basic_shape());
+    auto const& basic_shape = computed_values().clip_path()->basic_shape();
+    auto path = basic_shape.to_path(masking_area, layout_node());
+    auto device_pixel_scale = context.device_pixels_per_css_pixel();
+    path = path.copy_transformed(Gfx::AffineTransform {}.set_scale(device_pixel_scale, device_pixel_scale));
+    auto mask_rect = context.enclosing_device_rect(masking_area);
+    auto maybe_bitmap = Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, mask_rect.size().to_type<int>());
+    if (maybe_bitmap.is_error())
+        return {};
+    auto bitmap = maybe_bitmap.release_value();
+    Gfx::Painter painter(*bitmap);
+    Gfx::AntiAliasingPainter aa_painter(painter);
+    aa_painter.fill_path(path, Color::Black);
+    return bitmap;
 }
 
 }

@@ -42,12 +42,16 @@ static bool is_platform_object(Type const& type)
         "CanvasGradient"sv,
         "CanvasPattern"sv,
         "CanvasRenderingContext2D"sv,
+        "CloseWatcher"sv,
         "CryptoKey"sv,
         "Document"sv,
         "DocumentType"sv,
         "DOMRectReadOnly"sv,
+        "DynamicsCompressorNode"sv,
+        "ElementInternals"sv,
         "EventTarget"sv,
         "FileList"sv,
+        "FontFace"sv,
         "FormData"sv,
         "HTMLCollection"sv,
         "ImageBitmap"sv,
@@ -77,6 +81,7 @@ static bool is_platform_object(Type const& type)
         "Request"sv,
         "Selection"sv,
         "SVGTransform"sv,
+        "ShadowRoot"sv,
         "Table"sv,
         "Text"sv,
         "TextMetrics"sv,
@@ -163,10 +168,10 @@ CppType idl_type_name_to_cpp_type(Type const& type, Interface const& interface)
     if (type.is_string())
         return { .name = "String", .sequence_storage_type = SequenceStorageType::Vector };
 
-    if (type.name() == "double" && !type.is_nullable())
+    if ((type.name() == "double" || type.name() == "unrestricted double") && !type.is_nullable())
         return { .name = "double", .sequence_storage_type = SequenceStorageType::Vector };
 
-    if (type.name() == "float" && !type.is_nullable())
+    if ((type.name() == "float" || type.name() == "unrestricted float") && !type.is_nullable())
         return { .name = "float", .sequence_storage_type = SequenceStorageType::Vector };
 
     if (type.name() == "boolean" && !type.is_nullable())
@@ -460,6 +465,7 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
     scoped_generator.set("legacy_null_to_empty_string", legacy_null_to_empty_string ? "true" : "false");
     scoped_generator.set("string_type", string_to_fly_string ? "FlyString" : "String");
     scoped_generator.set("parameter.type.name", parameter.type->name());
+    scoped_generator.set("parameter.name", parameter.name);
 
     if (explicit_null) {
         if (!IDL::is_platform_object(*parameter.type)) {
@@ -557,7 +563,14 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
 )~~~");
             }
         }
-    } else if (parameter.type->name() == "double" || parameter.type->name() == "float") {
+    } else if (parameter.type->is_floating_point()) {
+        if (parameter.type->name() == "unrestricted float") {
+            scoped_generator.set("parameter.type.name", "float");
+        } else if (parameter.type->name() == "unrestricted double") {
+            scoped_generator.set("parameter.type.name", "double");
+        }
+
+        bool is_wrapped_in_optional_type = false;
         if (!optional) {
             scoped_generator.append(R"~~~(
     @parameter.type.name@ @cpp_name@ = TRY(@js_name@@js_suffix@.to_double(vm));
@@ -568,6 +581,7 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
     @parameter.type.name@ @cpp_name@;
 )~~~");
             } else {
+                is_wrapped_in_optional_type = true;
                 scoped_generator.append(R"~~~(
     Optional<@parameter.type.name@> @cpp_name@;
 )~~~");
@@ -584,6 +598,22 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
             } else {
                 scoped_generator.append(R"~~~(
 )~~~");
+            }
+        }
+
+        if (parameter.type->is_restricted_floating_point()) {
+            if (is_wrapped_in_optional_type) {
+                scoped_generator.append(R"~~~(
+    if (@cpp_name@.has_value() && (isinf(*@cpp_name@) || isnan(*@cpp_name@))) {
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::InvalidRestrictedFloatingPointParameter, "@parameter.name@");
+    }
+    )~~~");
+            } else {
+                scoped_generator.append(R"~~~(
+    if (isinf(@cpp_name@) || isnan(@cpp_name@)) {
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::InvalidRestrictedFloatingPointParameter, "@parameter.name@");
+    }
+    )~~~");
             }
         }
     } else if (parameter.type->name() == "Promise") {
@@ -886,7 +916,7 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
 )~~~");
                 } else {
                     sequence_generator.append(R"~~~(
-    @sequence.storage_type@ @cpp_name@ { global_object.heap() };
+    @sequence.storage_type@<@sequence.type@> @cpp_name@ { vm.heap() };
 )~~~");
                 }
             }
@@ -1568,7 +1598,7 @@ void IDL::ParameterizedType::generate_sequence_from_iterable(SourceGenerator& ge
 )~~~");
     } else {
         sequence_generator.append(R"~~~(
-    @sequence.storage_type@ @cpp_name@ { vm.heap() };
+    @sequence.storage_type@<@sequence.type@> @cpp_name@ { vm.heap() };
 )~~~");
     }
 
@@ -1700,7 +1730,7 @@ static void generate_wrap_statement(SourceGenerator& generator, ByteString const
 
     @result_expression@ new_array@recursion_depth@;
 )~~~");
-    } else if (type.name() == "boolean" || type.name() == "double" || type.name() == "float") {
+    } else if (type.name() == "boolean" || type.is_floating_point()) {
         if (type.is_nullable()) {
             scoped_generator.append(R"~~~(
     @result_expression@ JS::Value(@value@.release_value());
@@ -1901,6 +1931,7 @@ static void generate_function(SourceGenerator& generator, IDL::Function const& f
     auto function_generator = generator.fork();
     function_generator.set("class_name", class_name);
     function_generator.set("interface_fully_qualified_name", interface_fully_qualified_name);
+    function_generator.set("function.name", function.name);
     function_generator.set("function.name:snakecase", make_input_acceptable_cpp(function.name.to_snakecase()));
     function_generator.set("overload_suffix", function.is_overloaded ? ByteString::number(function.overload_index) : ByteString::empty());
 
@@ -2631,7 +2662,36 @@ static void generate_prototype_or_global_mixin_declarations(IDL::Interface const
         )~~~");
     }
 
+    if (interface.set_entry_type.has_value()) {
+        auto setlike_generator = generator.fork();
+
+        setlike_generator.append(R"~~~(
+    JS_DECLARE_NATIVE_FUNCTION(get_size);
+    JS_DECLARE_NATIVE_FUNCTION(entries);
+    JS_DECLARE_NATIVE_FUNCTION(values);
+    JS_DECLARE_NATIVE_FUNCTION(for_each);
+    JS_DECLARE_NATIVE_FUNCTION(has);
+)~~~");
+        if (!interface.overload_sets.contains("add"sv) && !interface.is_set_readonly) {
+            setlike_generator.append(R"~~~(
+    JS_DECLARE_NATIVE_FUNCTION(add);
+)~~~");
+        }
+        if (!interface.overload_sets.contains("delete"sv) && !interface.is_set_readonly) {
+            setlike_generator.append(R"~~~(
+    JS_DECLARE_NATIVE_FUNCTION(delete_);
+)~~~");
+        }
+        if (!interface.overload_sets.contains("clear"sv) && !interface.is_set_readonly) {
+            setlike_generator.append(R"~~~(
+    JS_DECLARE_NATIVE_FUNCTION(clear);
+)~~~");
+        }
+    }
+
     for (auto& attribute : interface.attributes) {
+        if (attribute.extended_attributes.contains("FIXME"))
+            continue;
         auto attribute_generator = generator.fork();
         attribute_generator.set("attribute.name:snakecase", attribute.name.to_snakecase());
         attribute_generator.append(R"~~~(
@@ -2713,6 +2773,8 @@ static void collect_attribute_values_of_an_inheritance_stack(SourceGenerator& fu
         // NOTE: Functions, constructors and static functions cannot be JSON types, so they're not checked here.
 
         for (auto& attribute : interface_in_chain.attributes) {
+            if (attribute.extended_attributes.contains("FIXME"))
+                continue;
             if (!attribute.type->is_json(interface_in_chain))
                 continue;
 
@@ -3066,6 +3128,15 @@ void @class_name@::initialize(JS::Realm& realm)
 
     // https://webidl.spec.whatwg.org/#es-attributes
     for (auto& attribute : interface.attributes) {
+        if (attribute.extended_attributes.contains("FIXME")) {
+            auto fixme_attribute_generator = generator.fork();
+            fixme_attribute_generator.set("attribute.name", attribute.name);
+            fixme_attribute_generator.append(R"~~~(
+    define_direct_property("@attribute.name@", JS::js_undefined(), default_attributes | JS::Attribute::Unimplemented);
+            )~~~");
+            continue;
+        }
+
         auto attribute_generator = generator.fork();
         attribute_generator.set("attribute.name", attribute.name);
         attribute_generator.set("attribute.getter_callback", attribute.getter_callback_name);
@@ -3084,6 +3155,16 @@ void @class_name@::initialize(JS::Realm& realm)
         attribute_generator.append(R"~~~(
     define_native_accessor(realm, "@attribute.name@", @attribute.getter_callback@, @attribute.setter_callback@, default_attributes);
 )~~~");
+    }
+
+    for (auto& function : interface.functions) {
+        if (function.extended_attributes.contains("FIXME")) {
+            auto fixme_function_generator = generator.fork();
+            fixme_function_generator.set("function.name", function.name);
+            fixme_function_generator.append(R"~~~(
+        define_direct_property("@function.name@", JS::js_undefined(), default_attributes | JS::Attribute::Unimplemented);
+            )~~~");
+        }
     }
 
     // https://webidl.spec.whatwg.org/#es-constants
@@ -3160,6 +3241,39 @@ void @class_name@::initialize(JS::Realm& realm)
 )~~~");
     }
 
+    // https://webidl.spec.whatwg.org/#js-setlike
+    if (interface.set_entry_type.has_value()) {
+
+        auto setlike_generator = generator.fork();
+
+        setlike_generator.append(R"~~~(
+    define_native_accessor(realm, vm.names.size, get_size, nullptr, JS::Attribute::Enumerable | JS::Attribute::Configurable);
+    define_native_function(realm, vm.names.entries, entries, 0, default_attributes);
+    // NOTE: Keys intentionally returns values for setlike
+    define_native_function(realm, vm.names.keys, values, 0, default_attributes);
+    define_native_function(realm, vm.names.values, values, 0, default_attributes);
+    define_direct_property(vm.well_known_symbol_iterator(), get_without_side_effects(vm.names.values), JS::Attribute::Configurable | JS::Attribute::Writable);
+    define_native_function(realm, vm.names.forEach, for_each, 1, default_attributes);
+    define_native_function(realm, vm.names.has, has, 1, default_attributes);
+)~~~");
+
+        if (!interface.overload_sets.contains("add"sv) && !interface.is_set_readonly) {
+            setlike_generator.append(R"~~~(
+    define_native_function(realm, vm.names.add, add, 1, default_attributes);
+)~~~");
+        }
+        if (!interface.overload_sets.contains("delete"sv) && !interface.is_set_readonly) {
+            setlike_generator.append(R"~~~(
+    define_native_function(realm, vm.names.delete_, delete_, 1, default_attributes);
+)~~~");
+        }
+        if (!interface.overload_sets.contains("clear"sv) && !interface.is_set_readonly) {
+            setlike_generator.append(R"~~~(
+    define_native_function(realm, vm.names.clear, clear, 0, default_attributes);
+)~~~");
+        }
+    }
+
     if (interface.has_unscopable_member) {
         generator.append(R"~~~(
     define_direct_property(vm.well_known_symbol_unscopables(), unscopable_object, JS::Attribute::Configurable);
@@ -3182,7 +3296,7 @@ void @class_name@::initialize(JS::Realm& realm)
 
     if (!interface.attributes.is_empty() || !interface.functions.is_empty() || interface.has_stringifier) {
         generator.append(R"~~~(
-static JS::ThrowCompletionOr<@fully_qualified_name@*> impl_from(JS::VM& vm)
+[[maybe_unused]] static JS::ThrowCompletionOr<@fully_qualified_name@*> impl_from(JS::VM& vm)
 {
     auto this_value = vm.this_value();
     JS::Object* this_object = nullptr;
@@ -3212,6 +3326,8 @@ static JS::ThrowCompletionOr<@fully_qualified_name@*> impl_from(JS::VM& vm)
     }
 
     for (auto& attribute : interface.attributes) {
+        if (attribute.extended_attributes.contains("FIXME"))
+            continue;
         auto attribute_generator = generator.fork();
         attribute_generator.set("attribute.name", attribute.name);
         attribute_generator.set("attribute.getter_callback", attribute.getter_callback_name);
@@ -3242,9 +3358,8 @@ JS_DEFINE_NATIVE_FUNCTION(@class_name@::@attribute.getter_callback@)
 {
     WebIDL::log_trace(vm, "@class_name@::@attribute.getter_callback@");
     [[maybe_unused]] auto& realm = *vm.current_realm();
-    auto* impl = TRY(impl_from(vm));
+    [[maybe_unused]] auto* impl = TRY(impl_from(vm));
 )~~~");
-
         if (attribute.extended_attributes.contains("CEReactions")) {
             // 1. Push a new element queue onto this object's relevant agent's custom element reactions stack.
             attribute_generator.append(R"~~~(
@@ -3387,13 +3502,66 @@ JS_DEFINE_NATIVE_FUNCTION(@class_name@::@attribute.getter_callback@)
 )~~~");
                     // FIXME: 7. If contentAttributeValue corresponds to a state of attributeDefinition with no associated keyword value, then return null.
                 }
-            } else if (attribute.type->name() != "boolean") {
+            }
+            // If a reflected IDL attribute has the type boolean:
+            else if (attribute.type->name() == "boolean") {
+                // The getter steps are:
+                // 1. Let contentAttributeValue be the result of running this's get the content attribute.
+                // 2. If contentAttributeValue is null, then return false
                 attribute_generator.append(R"~~~(
-    auto retval = impl->get_attribute_value(HTML::AttributeNames::@attribute.reflect_name@);
+    auto retval = impl->has_attribute(HTML::AttributeNames::@attribute.reflect_name@);
+)~~~");
+            }
+            // If a reflected IDL attribute has the type long:
+            else if (attribute.type->name() == "long") {
+                // The getter steps are:
+                // 1. Let contentAttributeValue be the result of running this's get the content attribute.
+                // 2. If contentAttributeValue is not null:
+                //    1. Let parsedValue be the result of integer parsing contentAttributeValue if the reflected IDL attribute is not limited to only non-negative numbers;
+                //       otherwise the result of non-negative integer parsing contentAttributeValue.
+                //    2. If parsedValue is not an error and is within the long range, then return parsedValue.
+                attribute_generator.append(R"~~~(
+    i32 retval = 0;
+    auto content_attribute_value = impl->get_attribute(HTML::AttributeNames::@attribute.reflect_name@);
+    if (content_attribute_value.has_value()) {
+        auto maybe_parsed_value = Web::HTML::parse_integer(*content_attribute_value);
+        if (maybe_parsed_value.has_value())
+            retval = *maybe_parsed_value;
+    }
+)~~~");
+            }
+            // If a reflected IDL attribute has the type unsigned long,
+            // FIXME: optionally limited to only positive numbers, limited to only positive numbers with fallback, or clamped to the range [clampedMin, clampedMax], and optionally with a default value defaultValue:
+            else if (attribute.type->name() == "unsigned long") {
+                // The getter steps are:
+                // 1. Let contentAttributeValue be the result of running this's get the content attribute.
+                // 2. Let minimum be 0.
+                // FIXME: 3. If the reflected IDL attribute is limited to only positive numbers or limited to only positive numbers with fallback, then set minimum to 1.
+                // FIXME: 4. If the reflected IDL attribute is clamped to the range, then set minimum to clampedMin.
+                // 5. Let maximum be 2147483647 if the reflected IDL attribute is not clamped to the range; otherwise clampedMax.
+                // 6. If contentAttributeValue is not null:
+                //    1. Let parsedValue be the result of non-negative integer parsing contentAttributeValue.
+                //       2. If parsedValue is not an error and is in the range minimum to maximum, inclusive, then return parsedValue.
+                //       FIXME: 3. If parsedValue is not an error and the reflected IDL attribute is clamped to the range:
+                //              FIXME: 1. If parsedValue is less than minimum, then return minimum.
+                //              FIXME: 2. Return maximum.
+                attribute_generator.append(R"~~~(
+    u32 retval = 0;
+    auto content_attribute_value = impl->get_attribute(HTML::AttributeNames::@attribute.reflect_name@);
+    u32 minimum = 0;
+    u32 maximum = 2147483647;
+    if (content_attribute_value.has_value()) {
+        auto parsed_value = Web::HTML::parse_non_negative_integer(*content_attribute_value);
+        if (parsed_value.has_value()) {
+            if (*parsed_value >= minimum && *parsed_value <= maximum) {
+                retval = *parsed_value;
+            }
+        }
+    }
 )~~~");
             } else {
                 attribute_generator.append(R"~~~(
-    auto retval = impl->has_attribute(HTML::AttributeNames::@attribute.reflect_name@);
+    auto retval = impl->get_attribute_value(HTML::AttributeNames::@attribute.reflect_name@);
 )~~~");
             }
 
@@ -3465,25 +3633,27 @@ JS_DEFINE_NATIVE_FUNCTION(@class_name@::@attribute.setter_callback@)
             generate_to_cpp(generator, attribute, "value", "", "cpp_value", interface, attribute.extended_attributes.contains("LegacyNullToEmptyString"));
 
             if (attribute.extended_attributes.contains("Reflect")) {
-                if (attribute.type->name() != "boolean") {
-                    if (attribute.type->is_nullable()) {
-                        attribute_generator.append(R"~~~(
-    if (!cpp_value.has_value())
-        impl->remove_attribute(HTML::AttributeNames::@attribute.reflect_name@);
-    else
-        MUST(impl->set_attribute(HTML::AttributeNames::@attribute.reflect_name@, cpp_value.value()));
-)~~~");
-                    } else {
-                        attribute_generator.append(R"~~~(
-    MUST(impl->set_attribute(HTML::AttributeNames::@attribute.reflect_name@, cpp_value));
-)~~~");
-                    }
-                } else {
+                if (attribute.type->name() == "boolean") {
                     attribute_generator.append(R"~~~(
     if (!cpp_value)
         impl->remove_attribute(HTML::AttributeNames::@attribute.reflect_name@);
     else
         MUST(impl->set_attribute(HTML::AttributeNames::@attribute.reflect_name@, String {}));
+)~~~");
+                } else if (attribute.type->is_integer() && !attribute.type->is_nullable()) {
+                    attribute_generator.append(R"~~~(
+    MUST(impl->set_attribute(HTML::AttributeNames::@attribute.reflect_name@, MUST(String::number(cpp_value))));
+)~~~");
+                } else if (attribute.type->is_nullable()) {
+                    attribute_generator.append(R"~~~(
+    if (!cpp_value.has_value())
+        impl->remove_attribute(HTML::AttributeNames::@attribute.reflect_name@);
+    else
+        MUST(impl->set_attribute(HTML::AttributeNames::@attribute.reflect_name@, cpp_value.value()));
+)~~~");
+                } else {
+                    attribute_generator.append(R"~~~(
+MUST(impl->set_attribute(HTML::AttributeNames::@attribute.reflect_name@, cpp_value));
 )~~~");
                 }
 
@@ -3585,6 +3755,8 @@ JS_DEFINE_NATIVE_FUNCTION(@class_name@::@attribute.setter_callback@)
 
     // Implementation: Functions
     for (auto& function : interface.functions) {
+        if (function.extended_attributes.contains("FIXME"))
+            continue;
         if (function.extended_attributes.contains("Default")) {
             if (function.name == "toJSON"sv && function.return_type->name() == "object"sv) {
                 generate_default_to_json_function(generator, class_name, interface);
@@ -3685,6 +3857,149 @@ JS_DEFINE_NATIVE_FUNCTION(@class_name@::values)
 }
 )~~~");
     }
+
+    if (interface.set_entry_type.has_value()) {
+        auto setlike_generator = generator.fork();
+        setlike_generator.set("value_type", interface.set_entry_type.value()->name());
+        setlike_generator.append(R"~~~(
+// https://webidl.spec.whatwg.org/#js-set-size
+JS_DEFINE_NATIVE_FUNCTION(@class_name@::get_size)
+{
+    WebIDL::log_trace(vm, "@class_name@::size");
+    auto* impl = TRY(impl_from(vm));
+
+    JS::NonnullGCPtr<JS::Set> set = impl->set_entries();
+
+    return set->set_size();
+}
+
+// https://webidl.spec.whatwg.org/#js-set-entries
+JS_DEFINE_NATIVE_FUNCTION(@class_name@::entries)
+{
+    WebIDL::log_trace(vm, "@class_name@::entries");
+    auto& realm = *vm.current_realm();
+    auto* impl = TRY(impl_from(vm));
+
+    JS::NonnullGCPtr<JS::Set> set = impl->set_entries();
+
+    return TRY(throw_dom_exception_if_needed(vm, [&] { return JS::SetIterator::create(realm, *set, Object::PropertyKind::KeyAndValue); }));
+}
+
+// https://webidl.spec.whatwg.org/#js-set-values
+JS_DEFINE_NATIVE_FUNCTION(@class_name@::values)
+{
+    WebIDL::log_trace(vm, "@class_name@::values");
+    auto& realm = *vm.current_realm();
+    auto* impl = TRY(impl_from(vm));
+
+    JS::NonnullGCPtr<JS::Set> set = impl->set_entries();
+
+    return TRY(throw_dom_exception_if_needed(vm, [&] { return JS::SetIterator::create(realm, *set, Object::PropertyKind::Value); }));
+}
+
+// https://webidl.spec.whatwg.org/#js-set-forEach
+JS_DEFINE_NATIVE_FUNCTION(@class_name@::for_each)
+{
+    WebIDL::log_trace(vm, "@class_name@::for_each");
+    auto* impl = TRY(impl_from(vm));
+
+    JS::NonnullGCPtr<JS::Set> set = impl->set_entries();
+
+    auto callback = vm.argument(0);
+    if (!callback.is_function())
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAFunction, callback.to_string_without_side_effects());
+
+    for (auto& entry : *set) {
+        auto value = entry.key;
+        TRY(call(vm, callback.as_function(), vm.argument(1), value, value, impl));
+    }
+
+    return JS::js_undefined();
+}
+
+// https://webidl.spec.whatwg.org/#js-set-has
+JS_DEFINE_NATIVE_FUNCTION(@class_name@::has)
+{
+    WebIDL::log_trace(vm, "@class_name@::has");
+    auto* impl = TRY(impl_from(vm));
+
+    JS::NonnullGCPtr<JS::Set> set = impl->set_entries();
+
+    auto value_arg = vm.argument(0);
+    if (!value_arg.is_object() && !is<@value_type@>(value_arg.as_object())) {
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObjectOfType, "@value_type@");
+    }
+
+    // FIXME: If value is -0, set value to +0.
+    // What? Which interfaces have a number as their set type?
+
+    return set->set_has(value_arg);
+}
+)~~~");
+
+        if (!interface.overload_sets.contains("add"sv) && !interface.is_set_readonly) {
+            setlike_generator.append(R"~~~(
+// https://webidl.spec.whatwg.org/#js-set-add
+JS_DEFINE_NATIVE_FUNCTION(@class_name@::add)
+{
+    WebIDL::log_trace(vm, "@class_name@::add");
+    auto* impl = TRY(impl_from(vm));
+
+    JS::NonnullGCPtr<JS::Set> set = impl->set_entries();
+
+    auto value_arg = vm.argument(0);
+    if (!value_arg.is_object() && !is<@value_type@>(value_arg.as_object())) {
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObjectOfType, "@value_type@");
+    }
+
+    // FIXME: If value is -0, set value to +0.
+    // What? Which interfaces have a number as their set type?
+
+    set->set_add(value_arg);
+
+    return impl;
+}
+)~~~");
+        }
+        if (!interface.overload_sets.contains("delete"sv) && !interface.is_set_readonly) {
+            setlike_generator.append(R"~~~(
+// https://webidl.spec.whatwg.org/#js-set-delete
+JS_DEFINE_NATIVE_FUNCTION(@class_name@::delete_)
+{
+    WebIDL::log_trace(vm, "@class_name@::delete_");
+    auto* impl = TRY(impl_from(vm));
+
+    JS::NonnullGCPtr<JS::Set> set = impl->set_entries();
+
+    auto value_arg = vm.argument(0);
+    if (!value_arg.is_object() && !is<@value_type@>(value_arg.as_object())) {
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObjectOfType, "@value_type@");
+    }
+
+    // FIXME: If value is -0, set value to +0.
+    // What? Which interfaces have a number as their set type?
+
+    return set->set_remove(value_arg);
+}
+)~~~");
+        }
+        if (!interface.overload_sets.contains("clear"sv) && !interface.is_set_readonly) {
+            setlike_generator.append(R"~~~(
+// https://webidl.spec.whatwg.org/#js-set-clear
+JS_DEFINE_NATIVE_FUNCTION(@class_name@::clear)
+{
+    WebIDL::log_trace(vm, "@class_name@::clear");
+    auto* impl = TRY(impl_from(vm));
+
+    JS::NonnullGCPtr<JS::Set> set = impl->set_entries();
+
+    set->set_clear();
+
+    return JS::js_undefined();
+}
+)~~~");
+        }
+    }
 }
 
 void generate_namespace_header(IDL::Interface const& interface, StringBuilder& builder)
@@ -3746,6 +4061,42 @@ private:
 )~~~");
 }
 
+static void generate_using_namespace_definitions(SourceGenerator& generator)
+{
+    generator.append(R"~~~(
+    // FIXME: This is a total hack until we can figure out the namespace for a given type somehow.
+    using namespace Web::Animations;
+    using namespace Web::CSS;
+    using namespace Web::DOM;
+    using namespace Web::Crypto;
+    using namespace Web::DOMParsing;
+    using namespace Web::DOMURL;
+    using namespace Web::Encoding;
+    using namespace Web::Fetch;
+    using namespace Web::FileAPI;
+    using namespace Web::Geometry;
+    using namespace Web::HighResolutionTime;
+    using namespace Web::HTML;
+    using namespace Web::IndexedDB;
+    using namespace Web::Internals;
+    using namespace Web::IntersectionObserver;
+    using namespace Web::RequestIdleCallback;
+    using namespace Web::ResizeObserver;
+    using namespace Web::Selection;
+    using namespace Web::NavigationTiming;
+    using namespace Web::PerformanceTimeline;
+    using namespace Web::UserTiming;
+    using namespace Web::Streams;
+    using namespace Web::SVG;
+    using namespace Web::UIEvents;
+    using namespace Web::XHR;
+    using namespace Web::WebAssembly;
+    using namespace Web::WebAudio;
+    using namespace Web::WebGL;
+    using namespace Web::WebIDL;
+)~~~"sv);
+}
+
 void generate_namespace_implementation(IDL::Interface const& interface, StringBuilder& builder)
 {
     SourceGenerator generator { builder };
@@ -3779,32 +4130,9 @@ void generate_namespace_implementation(IDL::Interface const& interface, StringBu
 
     emit_includes_for_all_imports(interface, generator, interface.pair_iterator_types.has_value());
 
-    generator.append(R"~~~(
-// FIXME: This is a total hack until we can figure out the namespace for a given type somehow.
-using namespace Web::Animations;
-using namespace Web::CSS;
-using namespace Web::DOM;
-using namespace Web::DOMParsing;
-using namespace Web::DOMURL;
-using namespace Web::Encoding;
-using namespace Web::Fetch;
-using namespace Web::FileAPI;
-using namespace Web::Geometry;
-using namespace Web::HighResolutionTime;
-using namespace Web::HTML;
-using namespace Web::Internals;
-using namespace Web::IntersectionObserver;
-using namespace Web::RequestIdleCallback;
-using namespace Web::ResizeObserver;
-using namespace Web::Selection;
-using namespace Web::Streams;
-using namespace Web::UIEvents;
-using namespace Web::XHR;
-using namespace Web::WebAssembly;
-using namespace Web::WebAudio;
-using namespace Web::WebGL;
-using namespace Web::WebIDL;
+    generate_using_namespace_definitions(generator);
 
+    generator.append(R"~~~(
 namespace Web::Bindings {
 
 JS_DEFINE_ALLOCATOR(@namespace_class@);
@@ -3864,8 +4192,11 @@ void @namespace_class@::finalize()
 )~~~");
     }
 
-    for (auto const& function : interface.functions)
+    for (auto const& function : interface.functions) {
+        if (function.extended_attributes.contains("FIXME"))
+            continue;
         generate_function(generator, function, StaticFunction::Yes, interface.namespace_class, interface.name, interface);
+    }
     for (auto const& overload_set : interface.overload_sets) {
         if (overload_set.value.size() == 1)
             continue;
@@ -4044,34 +4375,9 @@ void generate_constructor_implementation(IDL::Interface const& interface, String
 
     emit_includes_for_all_imports(interface, generator, interface.pair_iterator_types.has_value());
 
-    generator.append(R"~~~(
-// FIXME: This is a total hack until we can figure out the namespace for a given type somehow.
-using namespace Web::Animations;
-using namespace Web::CSS;
-using namespace Web::DOM;
-using namespace Web::DOMParsing;
-using namespace Web::DOMURL;
-using namespace Web::Encoding;
-using namespace Web::Fetch;
-using namespace Web::FileAPI;
-using namespace Web::Geometry;
-using namespace Web::HighResolutionTime;
-using namespace Web::HTML;
-using namespace Web::Internals;
-using namespace Web::IntersectionObserver;
-using namespace Web::PerformanceTimeline;
-using namespace Web::RequestIdleCallback;
-using namespace Web::ResizeObserver;
-using namespace Web::Selection;
-using namespace Web::Streams;
-using namespace Web::UIEvents;
-using namespace Web::UserTiming;
-using namespace Web::XHR;
-using namespace Web::WebAssembly;
-using namespace Web::WebAudio;
-using namespace Web::WebGL;
-using namespace Web::WebIDL;
+    generate_using_namespace_definitions(generator);
 
+    generator.append(R"~~~(
 namespace Web::Bindings {
 
 JS_DEFINE_ALLOCATOR(@constructor_class@);
@@ -4181,8 +4487,11 @@ JS_DEFINE_NATIVE_FUNCTION(@constructor_class@::@attribute.getter_callback@)
     }
 
     // Implementation: Static Functions
-    for (auto& function : interface.static_functions)
+    for (auto& function : interface.static_functions) {
+        if (function.extended_attributes.contains("FIXME"))
+            continue;
         generate_function(generator, function, StaticFunction::Yes, interface.constructor_class, interface.fully_qualified_name, interface);
+    }
     for (auto const& overload_set : interface.static_overload_sets) {
         if (overload_set.value.size() == 1)
             continue;
@@ -4264,6 +4573,7 @@ void generate_prototype_implementation(IDL::Interface const& interface, StringBu
 #include <LibWeb/DOM/IDLEventListener.h>
 #include <LibWeb/DOM/NodeFilter.h>
 #include <LibWeb/DOM/Range.h>
+#include <LibWeb/HTML/Numbers.h>
 #include <LibWeb/HTML/Origin.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/Window.h>
@@ -4282,6 +4592,8 @@ void generate_prototype_implementation(IDL::Interface const& interface, StringBu
 
     bool has_ce_reactions = false;
     for (auto const& function : interface.functions) {
+        if (function.extended_attributes.contains("FIXME"))
+            continue;
         if (function.extended_attributes.contains("CEReactions")) {
             has_ce_reactions = true;
             break;
@@ -4314,39 +4626,9 @@ void generate_prototype_implementation(IDL::Interface const& interface, StringBu
 
     emit_includes_for_all_imports(interface, generator, interface.pair_iterator_types.has_value());
 
+    generate_using_namespace_definitions(generator);
+
     generator.append(R"~~~(
-
-// FIXME: This is a total hack until we can figure out the namespace for a given type somehow.
-using namespace Web::Animations;
-using namespace Web::Crypto;
-using namespace Web::CSS;
-using namespace Web::DOM;
-using namespace Web::DOMParsing;
-using namespace Web::DOMURL;
-using namespace Web::Encoding;
-using namespace Web::Fetch;
-using namespace Web::FileAPI;
-using namespace Web::Geometry;
-using namespace Web::HighResolutionTime;
-using namespace Web::HTML;
-using namespace Web::Internals;
-using namespace Web::IntersectionObserver;
-using namespace Web::NavigationTiming;
-using namespace Web::PerformanceTimeline;
-using namespace Web::RequestIdleCallback;
-using namespace Web::ResizeObserver;
-using namespace Web::Selection;
-using namespace Web::Streams;
-using namespace Web::SVG;
-using namespace Web::UIEvents;
-using namespace Web::UserTiming;
-using namespace Web::WebSockets;
-using namespace Web::XHR;
-using namespace Web::WebAssembly;
-using namespace Web::WebAudio;
-using namespace Web::WebGL;
-using namespace Web::WebIDL;
-
 namespace Web::Bindings {
 
 JS_DEFINE_ALLOCATOR(@prototype_class@);
@@ -4469,33 +4751,9 @@ void generate_iterator_prototype_implementation(IDL::Interface const& interface,
 
     emit_includes_for_all_imports(interface, generator, true);
 
-    generator.append(R"~~~(
-// FIXME: This is a total hack until we can figure out the namespace for a given type somehow.
-using namespace Web::Animations;
-using namespace Web::CSS;
-using namespace Web::DOM;
-using namespace Web::DOMParsing;
-using namespace Web::DOMURL;
-using namespace Web::Encoding;
-using namespace Web::Fetch;
-using namespace Web::FileAPI;
-using namespace Web::Geometry;
-using namespace Web::HighResolutionTime;
-using namespace Web::HTML;
-using namespace Web::Internals;
-using namespace Web::IntersectionObserver;
-using namespace Web::NavigationTiming;
-using namespace Web::PerformanceTimeline;
-using namespace Web::RequestIdleCallback;
-using namespace Web::ResizeObserver;
-using namespace Web::Selection;
-using namespace Web::XHR;
-using namespace Web::UIEvents;
-using namespace Web::UserTiming;
-using namespace Web::WebAudio;
-using namespace Web::WebGL;
-using namespace Web::WebIDL;
+    generate_using_namespace_definitions(generator);
 
+    generator.append(R"~~~(
 namespace Web::Bindings {
 
 JS_DEFINE_ALLOCATOR(@prototype_class@);
@@ -4606,38 +4864,9 @@ void generate_global_mixin_implementation(IDL::Interface const& interface, Strin
 
     emit_includes_for_all_imports(interface, generator, interface.pair_iterator_types.has_value());
 
+    generate_using_namespace_definitions(generator);
+
     generator.append(R"~~~(
-
-// FIXME: This is a total hack until we can figure out the namespace for a given type somehow.
-using namespace Web::Animations;
-using namespace Web::Crypto;
-using namespace Web::CSS;
-using namespace Web::DOM;
-using namespace Web::DOMParsing;
-using namespace Web::DOMURL;
-using namespace Web::Encoding;
-using namespace Web::Fetch;
-using namespace Web::FileAPI;
-using namespace Web::Geometry;
-using namespace Web::HighResolutionTime;
-using namespace Web::HTML;
-using namespace Web::Internals;
-using namespace Web::IntersectionObserver;
-using namespace Web::NavigationTiming;
-using namespace Web::PerformanceTimeline;
-using namespace Web::RequestIdleCallback;
-using namespace Web::ResizeObserver;
-using namespace Web::Selection;
-using namespace Web::Streams;
-using namespace Web::SVG;
-using namespace Web::UIEvents;
-using namespace Web::UserTiming;
-using namespace Web::WebAudio;
-using namespace Web::WebSockets;
-using namespace Web::XHR;
-using namespace Web::WebGL;
-using namespace Web::WebIDL;
-
 namespace Web::Bindings {
 
 @class_name@::@class_name@() = default;
@@ -4650,5 +4879,4 @@ namespace Web::Bindings {
 } // namespace Web::Bindings
     )~~~");
 }
-
 }

@@ -9,6 +9,7 @@
 
 #include <AK/Variant.h>
 #include <LibJS/Bytecode/Interpreter.h>
+#include <LibJS/Runtime/AsyncGeneratorRequest.h>
 #include <LibJS/Runtime/ExecutionContext.h>
 #include <LibJS/Runtime/Object.h>
 
@@ -30,7 +31,7 @@ public:
 
     static ThrowCompletionOr<NonnullGCPtr<AsyncGenerator>> create(Realm&, Value, ECMAScriptFunctionObject*, NonnullOwnPtr<ExecutionContext>);
 
-    virtual ~AsyncGenerator() override = default;
+    virtual ~AsyncGenerator() override;
 
     void async_generator_enqueue(Completion, NonnullGCPtr<PromiseCapability>);
     ThrowCompletionOr<void> resume(VM&, Completion completion);

@@ -1,18 +1,16 @@
-# SerenityOS and Ladybird
+# SerenityOS
 
-SerenityOS is a graphical Unix-like operating system for x86-64 computers.
+Graphical Unix-like operating system for x86-64 computers.
 
-Ladybird is a cross-platform independent web browser built from SerenityOS components.
+**NOTE:** The Ladybird cross-platform web browser project is now separate from SerenityOS, and is now actively developed in the [LadybirdBrowser/ladybird](https://github.com/LadybirdBrowser/ladybird) repository.
 
 [![GitHub Actions Status](https://github.com/SerenityOS/serenity/workflows/Build,%20lint,%20and%20test/badge.svg)](https://github.com/SerenityOS/serenity/actions?query=workflow%3A"Build%2C%20lint%2C%20and%20test")
-[![Azure DevOps Status](https://dev.azure.com/SerenityOS/SerenityOS/_apis/build/status/CI?branchName=master)](https://dev.azure.com/SerenityOS/SerenityOS/_build/latest?definitionId=1&branchName=master)
 [![Fuzzing Status](https://oss-fuzz-build-logs.storage.googleapis.com/badges/serenity.svg)](https://bugs.chromium.org/p/oss-fuzz/issues/list?sort=-opened&can=1&q=proj:serenity)
-[![Sonar Cube Static Analysis](https://sonarcloud.io/api/project_badges/measure?project=SerenityOS_serenity&metric=ncloc)](https://sonarcloud.io/dashboard?id=SerenityOS_serenity)
 [![Discord](https://img.shields.io/discord/830522505605283862.svg?logo=discord&logoColor=white&logoWidth=20&labelColor=7289DA&label=Discord&color=17cf48)](https://discord.gg/serenityos)
 
 [FAQ](Documentation/FAQ.md) | [Documentation](#how-do-i-read-the-documentation) | [Build Instructions](#how-do-i-build-and-run-this)
 
-## About SerenityOS
+## About
 
 SerenityOS is a love letter to '90s user interfaces with a custom Unix-like core. It flatters with sincerity by stealing beautiful ideas from various other systems.
 
@@ -24,19 +22,11 @@ You can watch videos of the system being developed on YouTube:
 * [Linus Groh's channel](https://youtube.com/linusgroh)
 * [kleines Filmröllchen's channel](https://www.youtube.com/c/kleinesfilmroellchen)
 
-## About Ladybird
-
-Ladybird is a cross-platform independent web browser built from SerenityOS components. It is a separate project from SerenityOS, but it uses the SerenityOS build system and shares much of the same code.
-All the browser UI code lives in the Serenity repository under the `Ladybird` directory. The SerenityOS LibGUI port of Ladybird lives in the `Userland/Applications/Browser` directory.
-All the implementation details are in the `Userland/Libraries` and `Userland/Services` directories.
-
-See the Ladybird [README.md](Ladybird/README.md) for more information.
-
-## SerenityOS Screenshot
+## Screenshot
 
 ![Screenshot as of c03b788.png](Meta/Screenshots/screenshot-c03b788.png)
 
-## SerenityOS Features
+## Features
 
 * Modern x86 64-bit kernel with pre-emptive multi-threading
 * [Browser](Userland/Applications/Browser/) with JavaScript, WebAssembly, and more (check the spec compliance for [JS](https://serenityos.github.io/libjs-website/test262/), [CSS](https://css.tobyase.de/), and [Wasm](https://serenityos.github.io/libjs-website/wasm/))
@@ -140,7 +130,7 @@ A general guide for contributing can be found in [`CONTRIBUTING.md`](CONTRIBUTIN
 * **Gregory Bertilson** - [Zaggy1024](https://github.com/Zaggy1024)
 * **Erik Wouters** - [EWouters](https://github.com/EWouters)
 * **Rodrigo Tobar** - [rtobar](https://github.com/rtobar)
-* **Alexander Kalenik** - [kalenikaliaksandr](https://github.com/kalenikaliaksandr) 
+* **Alexander Kalenik** - [kalenikaliaksandr](https://github.com/kalenikaliaksandr)
 * **Tim Ledbetter** - [tcl3](https://github.com/tcl3)
 * **Steffen T. Larssen** - [stelar7](https://github.com/stelar7)
 * **Andi Gallo** - [axgallo](https://github.com/axgallo)

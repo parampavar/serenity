@@ -43,9 +43,6 @@ public:
         Read = 1,
         Write = 2,
         Execute = 4,
-        HasBeenReadable = 16,
-        HasBeenWritable = 32,
-        HasBeenExecutable = 64,
         ReadOnly = Read,
         ReadWrite = Read | Write,
         ReadWriteExecute = Read | Write | Execute,
@@ -69,9 +66,9 @@ public:
     [[nodiscard]] bool is_writable() const { return (m_access & Access::Write) == Access::Write; }
     [[nodiscard]] bool is_executable() const { return (m_access & Access::Execute) == Access::Execute; }
 
-    [[nodiscard]] bool has_been_readable() const { return (m_access & Access::HasBeenReadable) == Access::HasBeenReadable; }
-    [[nodiscard]] bool has_been_writable() const { return (m_access & Access::HasBeenWritable) == Access::HasBeenWritable; }
-    [[nodiscard]] bool has_been_executable() const { return (m_access & Access::HasBeenExecutable) == Access::HasBeenExecutable; }
+    [[nodiscard]] bool has_been_readable() const { return m_has_been_readable.was_set(); }
+    [[nodiscard]] bool has_been_writable() const { return m_has_been_writable.was_set(); }
+    [[nodiscard]] bool has_been_executable() const { return m_has_been_executable.was_set(); }
 
     [[nodiscard]] bool is_cacheable() const { return m_cacheable; }
     [[nodiscard]] StringView name() const { return m_name ? m_name->view() : StringView {}; }
@@ -101,6 +98,9 @@ public:
         m_mmapped_from_readable = description_was_readable;
         m_mmapped_from_writable = description_was_writable;
     }
+
+    [[nodiscard]] bool is_initially_loaded_executable_segment() const { return m_initially_loaded_executable_segment.was_set(); }
+    void set_initially_loaded_executable_segment() { m_initially_loaded_executable_segment.set(); }
 
     [[nodiscard]] bool is_write_combine() const { return m_write_combine; }
     ErrorOr<void> set_write_combine(bool);
@@ -163,8 +163,8 @@ public:
         return size() / PAGE_SIZE;
     }
 
-    RefPtr<PhysicalPage> physical_page(size_t index) const;
-    RefPtr<PhysicalPage>& physical_page_slot(size_t index);
+    RefPtr<PhysicalRAMPage> physical_page(size_t index) const;
+    RefPtr<PhysicalRAMPage>& physical_page_slot(size_t index);
 
     [[nodiscard]] size_t offset_in_vmobject() const
     {
@@ -185,14 +185,30 @@ public:
 
     [[nodiscard]] size_t cow_pages() const;
 
-    void set_readable(bool b) { set_access_bit(Access::Read, b); }
-    void set_writable(bool b) { set_access_bit(Access::Write, b); }
-    void set_executable(bool b) { set_access_bit(Access::Execute, b); }
+    void set_readable(bool b)
+    {
+        set_access_bit(Access::Read, b);
+        if (b)
+            m_has_been_readable.set();
+    }
+    void set_writable(bool b)
+    {
+        set_access_bit(Access::Write, b);
+        if (b)
+            m_has_been_writable.set();
+    }
+    void set_executable(bool b)
+    {
+        set_access_bit(Access::Execute, b);
+        if (b)
+            m_has_been_executable.set();
+    }
 
     void unsafe_clear_access() { m_access = Region::None; }
 
     void set_page_directory(PageDirectory&);
     ErrorOr<void> map(PageDirectory&, ShouldFlushTLB = ShouldFlushTLB::Yes);
+    ErrorOr<void> map(PageDirectory&, PhysicalAddress, ShouldFlushTLB = ShouldFlushTLB::Yes);
     void unmap(ShouldFlushTLB = ShouldFlushTLB::Yes);
     void unmap_with_locks_held(ShouldFlushTLB, SpinlockLocker<RecursiveSpinlock<LockRank::None>>& pd_locker);
 
@@ -216,22 +232,24 @@ private:
     Region(NonnullLockRefPtr<VMObject>, size_t offset_in_vmobject, OwnPtr<KString>, Region::Access access, Cacheable, bool shared);
     Region(VirtualRange const&, NonnullLockRefPtr<VMObject>, size_t offset_in_vmobject, OwnPtr<KString>, Region::Access access, Cacheable, bool shared);
 
-    [[nodiscard]] bool remap_vmobject_page(size_t page_index, NonnullRefPtr<PhysicalPage>);
+    [[nodiscard]] bool remap_vmobject_page(size_t page_index, NonnullRefPtr<PhysicalRAMPage>);
 
     void set_access_bit(Access access, bool b)
     {
         if (b)
-            m_access |= access | (access << 4);
+            m_access |= access;
         else
             m_access &= ~access;
     }
 
     [[nodiscard]] PageFaultResponse handle_cow_fault(size_t page_index);
     [[nodiscard]] PageFaultResponse handle_inode_fault(size_t page_index);
-    [[nodiscard]] PageFaultResponse handle_zero_fault(size_t page_index, PhysicalPage& page_in_slot_at_time_of_fault);
+    [[nodiscard]] PageFaultResponse handle_zero_fault(size_t page_index, PhysicalRAMPage& page_in_slot_at_time_of_fault);
 
     [[nodiscard]] bool map_individual_page_impl(size_t page_index);
-    [[nodiscard]] bool map_individual_page_impl(size_t page_index, RefPtr<PhysicalPage>);
+    [[nodiscard]] bool map_individual_page_impl(size_t page_index, RefPtr<PhysicalRAMPage>);
+    [[nodiscard]] bool map_individual_page_impl(size_t page_index, PhysicalAddress);
+    [[nodiscard]] bool map_individual_page_impl(size_t page_index, PhysicalAddress, bool readable, bool writeable);
 
     LockRefPtr<PageDirectory> m_page_directory;
     VirtualRange m_range;
@@ -250,6 +268,10 @@ private:
     bool m_mmapped_from_writable : 1 { false };
 
     SetOnce m_immutable;
+    SetOnce m_initially_loaded_executable_segment;
+    SetOnce m_has_been_readable;
+    SetOnce m_has_been_writable;
+    SetOnce m_has_been_executable;
 
     IntrusiveRedBlackTreeNode<FlatPtr, Region, RawPtr<Region>> m_tree_node;
     IntrusiveListNode<Region> m_vmobject_list_node;

@@ -17,8 +17,10 @@ moc_qt_objects("generate_moc") {
     "Qt/AutoComplete.h",
     "Qt/BrowserWindow.h",
     "Qt/EventLoopImplementationQtEventTarget.h",
+    "Qt/FindInPageWidget.h",
     "Qt/InspectorWidget.h",
     "Qt/LocationEdit.h",
+    "Qt/Settings.h",
     "Qt/SettingsDialog.h",
     "Qt/Tab.h",
     "Qt/TabBar.h",
@@ -37,7 +39,6 @@ link_qt("ladybird_qt_components") {
     "Gui",
     "Widgets",
     "Network",
-    "Svg",
   ]
 }
 
@@ -91,6 +92,7 @@ executable("ladybird_executable") {
       "Qt/BrowserWindow.cpp",
       "Qt/EventLoopImplementationQt.cpp",
       "Qt/EventLoopImplementationQtEventTarget.cpp",
+      "Qt/FindInPageWidget.cpp",
       "Qt/Icon.cpp",
       "Qt/InspectorWidget.cpp",
       "Qt/LocationEdit.cpp",
@@ -124,6 +126,7 @@ executable("ladybird_executable") {
       "AppKit/UI/LadybirdWebView.mm",
       "AppKit/UI/LadybirdWebViewBridge.cpp",
       "AppKit/UI/Palette.mm",
+      "AppKit/UI/SearchPanel.mm",
       "AppKit/UI/Tab.mm",
       "AppKit/UI/TabController.mm",
       "AppKit/UI/TaskManager.mm",

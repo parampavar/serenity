@@ -2,6 +2,7 @@
  * Copyright (c) 2021, Idan Horowitz <idan.horowitz@serenityos.org>
  * Copyright (c) 2021, the SerenityOS developers.
  * Copyright (c) 2023, networkException <networkexception@serenityos.org>
+ * Copyright (c) 2024, Shannon Booth <shannon@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -50,6 +51,43 @@ static Optional<URL::URL> parse_api_url(String const& url, Optional<String> cons
     return parsed.is_valid() ? parsed : Optional<URL::URL> {};
 }
 
+// https://url.spec.whatwg.org/#url-initialize
+JS::NonnullGCPtr<DOMURL> DOMURL::initialize_a_url(JS::Realm& realm, URL::URL const& url_record)
+{
+    // 1. Let query be urlRecord’s query, if that is non-null; otherwise the empty string.
+    auto query = url_record.query().value_or(String {});
+
+    // 2. Set url’s URL to urlRecord.
+    // 3. Set url’s query object to a new URLSearchParams object.
+    auto query_object = MUST(URLSearchParams::construct_impl(realm, query));
+
+    // 4. Initialize url’s query object with query.
+    auto result_url = DOMURL::create(realm, url_record, move(query_object));
+
+    // 5. Set url’s query object’s URL object to url.
+    result_url->m_query->m_url = result_url;
+
+    return result_url;
+}
+
+// https://url.spec.whatwg.org/#dom-url-parse
+JS::GCPtr<DOMURL> DOMURL::parse_for_bindings(JS::VM& vm, String const& url, Optional<String> const& base)
+{
+    auto& realm = *vm.current_realm();
+
+    // 1. Let parsedURL be the result of running the API URL parser on url with base, if given.
+    auto parsed_url = parse_api_url(url, base);
+
+    // 2. If parsedURL is failure, then return null.
+    if (!parsed_url.has_value())
+        return nullptr;
+
+    // 3. Let url be a new URL object.
+    // 4. Initialize url with parsedURL.
+    // 5. Return url.
+    return initialize_a_url(realm, parsed_url.value());
+}
+
 // https://url.spec.whatwg.org/#dom-url-url
 WebIDL::ExceptionOr<JS::NonnullGCPtr<DOMURL>> DOMURL::construct_impl(JS::Realm& realm, String const& url, Optional<String> const& base)
 {
@@ -60,20 +98,8 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<DOMURL>> DOMURL::construct_impl(JS::Realm& 
     if (!parsed_url.has_value())
         return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Invalid URL"sv };
 
-    // 3. Let query be parsedURL’s query, if that is non-null, and the empty string otherwise.
-    auto query = parsed_url->query().value_or(String {});
-
-    // 4. Set this’s URL to parsedURL.
-    // 5. Set this’s query object to a new URLSearchParams object.
-    auto query_object = MUST(URLSearchParams::construct_impl(realm, query));
-
-    // 6. Initialize this’s query object with query.
-    auto result_url = DOMURL::create(realm, parsed_url.release_value(), move(query_object));
-
-    // 7. Set this’s query object’s URL object to this.
-    result_url->m_query->m_url = result_url;
-
-    return result_url;
+    // 3. Initialize this with parsedURL.
+    return initialize_a_url(realm, parsed_url.value());
 }
 
 DOMURL::DOMURL(JS::Realm& realm, URL::URL url, JS::NonnullGCPtr<URLSearchParams> query)
@@ -522,7 +548,8 @@ HTML::Origin url_origin(URL::URL const& url)
     }
 
     // -> "file"
-    if (url.scheme() == "file"sv) {
+    // AD-HOC: Our resource:// is basically an alias to file://
+    if (url.scheme() == "file"sv || url.scheme() == "resource"sv) {
         // Unfortunate as it is, this is left as an exercise to the reader. When in doubt, return a new opaque origin.
         // Note: We must return an origin with the `file://' protocol for `file://' iframes to work from `file://' pages.
         return HTML::Origin(url.scheme().to_byte_string(), String {}, 0);
@@ -575,14 +602,20 @@ URL::URL parse(StringView input, Optional<URL::URL> const& base_url)
     if (!url.is_valid())
         return {};
 
-    // 3. If url’s scheme is not "blob",
+    // 3. If url’s scheme is not "blob", return url.
     if (url.scheme() != "blob")
         return url;
 
-    // FIXME: 4. Set url’s blob URL entry to the result of resolving the blob URL url,
-    // FIXME: 5. if that did not return failure, and null otherwise.
+    // 4. Set url’s blob URL entry to the result of resolving the blob URL url, if that did not return failure, and null otherwise.
+    auto blob_url_entry = FileAPI::resolve_a_blob_url(url);
+    if (blob_url_entry.has_value()) {
+        url.set_blob_url_entry(URL::BlobURLEntry {
+            .type = blob_url_entry->object->type(),
+            .byte_buffer = MUST(ByteBuffer::copy(blob_url_entry->object->bytes())),
+        });
+    }
 
-    // 6. Return url
+    // 5. Return url
     return url;
 }
 

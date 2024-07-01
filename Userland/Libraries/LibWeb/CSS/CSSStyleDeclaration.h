@@ -42,8 +42,10 @@ public:
     virtual String serialized() const = 0;
 
     virtual JS::ThrowCompletionOr<bool> internal_has_property(JS::PropertyKey const& name) const override;
-    virtual JS::ThrowCompletionOr<JS::Value> internal_get(JS::PropertyKey const&, JS::Value receiver, JS::CacheablePropertyMetadata*) const override;
+    virtual JS::ThrowCompletionOr<JS::Value> internal_get(JS::PropertyKey const&, JS::Value receiver, JS::CacheablePropertyMetadata*, PropertyLookupPhase) const override;
     virtual JS::ThrowCompletionOr<bool> internal_set(JS::PropertyKey const&, JS::Value value, JS::Value receiver, JS::CacheablePropertyMetadata*) override;
+
+    virtual JS::GCPtr<CSSRule> parent_rule() const;
 
 protected:
     explicit CSSStyleDeclaration(JS::Realm&);
@@ -77,6 +79,9 @@ public:
     virtual String serialized() const final override;
     virtual WebIDL::ExceptionOr<void> set_css_text(StringView) override;
 
+    virtual JS::GCPtr<CSSRule> parent_rule() const override;
+    void set_parent_rule(JS::NonnullGCPtr<CSSRule>);
+
 protected:
     PropertyOwningCSSStyleDeclaration(JS::Realm&, Vector<StyleProperty>, HashMap<FlyString, StyleProperty>);
 
@@ -90,6 +95,7 @@ private:
 
     virtual void visit_edges(Cell::Visitor&) override;
 
+    JS::GCPtr<CSSRule> m_parent_rule;
     Vector<StyleProperty> m_properties;
     HashMap<FlyString, StyleProperty> m_custom_properties;
 };

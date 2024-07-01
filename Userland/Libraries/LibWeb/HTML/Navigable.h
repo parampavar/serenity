@@ -45,9 +45,7 @@ struct TargetSnapshotParams {
 };
 
 // https://html.spec.whatwg.org/multipage/document-sequences.html#navigable
-class Navigable
-    : public JS::Cell
-    , public Weakable<Navigable> {
+class Navigable : public JS::Cell {
     JS_CELL(Navigable, JS::Cell);
     JS_DECLARE_ALLOCATOR(Navigable);
 
@@ -109,7 +107,7 @@ public:
         WindowType window_type;
     };
 
-    ChosenNavigable choose_a_navigable(StringView name, TokenizedFeature::NoOpener no_opener, ActivateTab = ActivateTab::Yes);
+    ChosenNavigable choose_a_navigable(StringView name, TokenizedFeature::NoOpener no_opener, ActivateTab = ActivateTab::Yes, Optional<TokenizedFeature::Map const&> window_features = {});
 
     static JS::GCPtr<Navigable> navigable_with_active_document(JS::NonnullGCPtr<DOM::Document>);
 

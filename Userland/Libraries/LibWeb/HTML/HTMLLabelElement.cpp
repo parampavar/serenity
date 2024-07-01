@@ -6,6 +6,7 @@
 
 #include <LibWeb/Bindings/HTMLLabelElementPrototype.h>
 #include <LibWeb/DOM/Document.h>
+#include <LibWeb/HTML/FormAssociatedElement.h>
 #include <LibWeb/HTML/HTMLLabelElement.h>
 #include <LibWeb/Layout/Label.h>
 
@@ -43,12 +44,12 @@ JS::GCPtr<HTMLElement> HTMLLabelElement::control() const
     // and the first such element in tree order is a labelable element, then that element is the
     // label element's labeled control.
     if (for_().has_value()) {
-        for_each_in_inclusive_subtree_of_type<HTMLElement>([&](auto& element) {
+        root().for_each_in_inclusive_subtree_of_type<HTMLElement>([&](auto& element) {
             if (element.id() == *for_() && element.is_labelable()) {
                 control = &const_cast<HTMLElement&>(element);
-                return IterationDecision::Break;
+                return TraversalDecision::Break;
             }
-            return IterationDecision::Continue;
+            return TraversalDecision::Continue;
         });
         return control;
     }
@@ -58,12 +59,29 @@ JS::GCPtr<HTMLElement> HTMLLabelElement::control() const
     for_each_in_subtree_of_type<HTMLElement>([&](auto& element) {
         if (element.is_labelable()) {
             control = &const_cast<HTMLElement&>(element);
-            return IterationDecision::Break;
+            return TraversalDecision::Break;
         }
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     });
 
     return control;
+}
+
+// https://html.spec.whatwg.org/multipage/forms.html#dom-label-form
+JS::GCPtr<HTMLFormElement> HTMLLabelElement::form() const
+{
+    auto labeled_control = control();
+
+    // 1. If the label element has no labeled control, then return null.
+    if (!labeled_control)
+        return {};
+
+    // 2. If the label element's labeled control is not a form-associated element, then return null.
+    if (!is<FormAssociatedElement>(*labeled_control))
+        return {};
+
+    // 3. Return the label element's labeled control's form owner (which can still be null).
+    return dynamic_cast<FormAssociatedElement*>(labeled_control.ptr())->form();
 }
 
 }

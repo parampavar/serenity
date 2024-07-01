@@ -43,7 +43,7 @@ Nobody is perfect, and sometimes we mess things up. That said, here are some goo
 
 **Do:**
 
-* Write in idiomatic SerenityOS C++20, using the `AK` containers in all code.
+* Write in idiomatic SerenityOS C++23, using the `AK` containers in all code.
 * Conform to the project coding style found in [CodingStyle.md](https://github.com/SerenityOS/serenity/blob/master/Documentation/CodingStyle.md). Use `clang-format` (version 18 or later) to automatically format C++ files. See [AdvancedBuildInstructions.md](https://github.com/SerenityOS/serenity/blob/master/Documentation/AdvancedBuildInstructions.md#clang-format-updates) for instructions on how to get an up-to-date version if your OS distribution does not ship clang-format-18.
 * Choose expressive variable, function and class names. Make it as obvious as possible what the code is doing.
 * Split your changes into separate, atomic commits (i.e. A commit per feature or fix, where the build, tests and the system are all functioning).
@@ -87,16 +87,16 @@ Ping them right away if it's something urgent! If it's less urgent, advertise yo
 
 ### Who are the project maintainers?
 
-The project founder and [BDFL](https://en.wikipedia.org/wiki/Benevolent_dictator_for_life) is [@awesomekling](https://github.com/awesomekling).
-
-There is also a group of maintainers with the ability to approve and merge PRs:
 - [@ADKaster](https://github.com/ADKaster)
 - [@alimpfard](https://github.com/alimpfard)
 - [@AtkinsSJ](https://github.com/AtkinsSJ)
+- [@awesomekling](https://github.com/awesomekling)
 - [@BertalanD](https://github.com/BertalanD)
 - [@GMTA](https://github.com/gmta)
 - [@kalenikaliaksandr](https://github.com/kalenikaliaksandr)
 - [@Lubrsi](https://github.com/Lubrsi)
+- [@nico](https://github.com/nico)
+- [@tcl3](https://github.com/tcl3)
 - [@timschumi](https://github.com/timschumi)
 - [@trflynn89](https://github.com/trflynn89)
 

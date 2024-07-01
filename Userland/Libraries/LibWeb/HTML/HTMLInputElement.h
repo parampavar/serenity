@@ -174,6 +174,8 @@ public:
     virtual void form_associated_element_was_removed(DOM::Node*) override;
     virtual void form_associated_element_attribute_changed(FlyString const&, Optional<String> const&) override;
 
+    JS::NonnullGCPtr<ValidityState const> validity() const;
+
     // ^HTMLElement
     // https://html.spec.whatwg.org/multipage/forms.html#category-label
     virtual bool is_labelable() const override { return type_state() != TypeAttributeState::Hidden; }
@@ -241,6 +243,7 @@ private:
     static TypeAttributeState parse_type_attribute(StringView);
     void create_shadow_tree_if_needed();
     void update_shadow_tree();
+    void create_button_input_shadow_tree();
     void create_text_input_shadow_tree();
     void create_color_input_shadow_tree();
     void create_file_input_shadow_tree();

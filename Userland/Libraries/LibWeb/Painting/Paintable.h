@@ -13,12 +13,6 @@
 
 namespace Web::Painting {
 
-enum class TraversalDecision {
-    Continue,
-    SkipChildrenAndContinue,
-    Break,
-};
-
 enum class PaintPhase {
     Background,
     Border,
@@ -51,7 +45,7 @@ enum class HitTestType {
 class Paintable
     : public JS::Cell
     , public TreeNode<Paintable> {
-    JS_CELL(Paintable, Cell);
+    JS_CELL(Paintable, JS::Cell);
 
 public:
     virtual ~Paintable();

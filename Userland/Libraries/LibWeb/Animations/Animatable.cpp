@@ -32,15 +32,15 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Animation>> Animatable::animate(Optional<JS
     // 3. If options is a KeyframeAnimationOptions object, let timeline be the timeline member of options or, if
     //    timeline member of options is missing, be the default document timeline of the node document of the element
     //    on which this method was called.
-    JS::GCPtr<AnimationTimeline> timeline;
+    Optional<JS::GCPtr<AnimationTimeline>> timeline;
     if (options.has<KeyframeAnimationOptions>())
         timeline = options.get<KeyframeAnimationOptions>().timeline;
-    if (!timeline)
+    if (!timeline.has_value())
         timeline = target->document().timeline();
 
     // 4. Construct a new Animation object, animation, in the relevant Realm of target by using the same procedure as
     //    the Animation() constructor, passing effect and timeline as arguments of the same name.
-    auto animation = TRY(Animation::construct_impl(realm, effect, timeline));
+    auto animation = TRY(Animation::construct_impl(realm, effect, move(timeline)));
 
     // 5. If options is a KeyframeAnimationOptions object, assign the value of the id member of options to animation’s
     //    id attribute.
@@ -55,7 +55,7 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Animation>> Animatable::animate(Optional<JS
 }
 
 // https://www.w3.org/TR/web-animations-1/#dom-animatable-getanimations
-Vector<JS::NonnullGCPtr<Animation>> Animatable::get_animations(Web::Animations::GetAnimationsOptions options)
+Vector<JS::NonnullGCPtr<Animation>> Animatable::get_animations(GetAnimationsOptions options)
 {
     // Returns the set of relevant animations for this object, or, if an options parameter is passed with subtree set to
     // true, returns the set of relevant animations for a subtree for this object.
@@ -71,13 +71,18 @@ Vector<JS::NonnullGCPtr<Animation>> Animatable::get_animations(Web::Animations::
         m_is_sorted_by_composite_order = true;
     }
 
-    // FIXME: Support subtree
-    (void)options;
-
     Vector<JS::NonnullGCPtr<Animation>> relevant_animations;
     for (auto const& animation : m_associated_animations) {
         if (animation->is_relevant())
             relevant_animations.append(*animation);
+    }
+
+    if (options.subtree) {
+        JS::NonnullGCPtr target { *static_cast<DOM::Element*>(this) };
+        target->for_each_child_of_type<DOM::Element>([&](auto& child) {
+            relevant_animations.extend(child.get_animations(options));
+            return IterationDecision::Continue;
+        });
     }
 
     return relevant_animations;

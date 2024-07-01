@@ -70,10 +70,11 @@ ErrorOr<FlatPtr> Process::sys$utimensat(Userspace<Syscall::SC_utimensat_params c
     }
 
     auto path = TRY(get_syscall_path_argument(params.path));
-    auto base = TRY(custody_for_dirfd(params.dirfd));
     auto& atime = times[0];
     auto& mtime = times[1];
-    TRY(VirtualFileSystem::the().utimensat(credentials(), path->view(), *base, atime, mtime, follow_symlink));
+
+    CustodyBase base(params.dirfd, path->view());
+    TRY(VirtualFileSystem::the().utimensat(credentials(), path->view(), base, atime, mtime, follow_symlink));
     return 0;
 }
 

@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Enumerate.h>
 #include <LibWasm/AbstractMachine/AbstractMachine.h>
 #include <LibWasm/AbstractMachine/BytecodeInterpreter.h>
 #include <LibWasm/AbstractMachine/Configuration.h>
@@ -34,7 +35,7 @@ Optional<FunctionAddress> Store::allocate(HostFunction&& function)
 Optional<TableAddress> Store::allocate(TableType const& type)
 {
     TableAddress address { m_tables.size() };
-    Vector<Optional<Reference>> elements;
+    Vector<Reference> elements;
     elements.resize(type.limits().min());
     m_tables.empend(TableInstance { type, move(elements) });
     return address;
@@ -155,11 +156,58 @@ InstantiationResult AbstractMachine::instantiate(Module const& module, Vector<Ex
     Vector<Vector<Reference>> elements;
     ModuleInstance auxiliary_instance;
 
-    // FIXME: Check that imports/extern match
+    module.for_each_section_of_type<ImportSection>([&](ImportSection const& section) {
+        for (auto [i, import_] : enumerate(section.imports())) {
+            auto extern_ = externs.at(i);
+            auto is_valid = import_.description().visit(
+                [&](MemoryType const& mem_type) -> bool {
+                    if (!extern_.has<MemoryAddress>())
+                        return false;
+                    auto other_mem_type = m_store.get(extern_.get<MemoryAddress>())->type();
+                    return other_mem_type.limits().is_subset_of(mem_type.limits());
+                },
+                [&](TableType const& table_type) -> bool {
+                    if (!extern_.has<TableAddress>())
+                        return false;
+                    auto other_table_type = m_store.get(extern_.get<TableAddress>())->type();
+                    return table_type.element_type() == other_table_type.element_type()
+                        && other_table_type.limits().is_subset_of(table_type.limits());
+                },
+                [&](GlobalType const& global_type) -> bool {
+                    if (!extern_.has<GlobalAddress>())
+                        return false;
+                    auto other_global_type = m_store.get(extern_.get<GlobalAddress>())->type();
+                    return global_type.type() == other_global_type.type()
+                        && global_type.is_mutable() == other_global_type.is_mutable();
+                },
+                [&](FunctionType const& type) -> bool {
+                    if (!extern_.has<FunctionAddress>())
+                        return false;
+                    auto other_type = m_store.get(extern_.get<FunctionAddress>())->visit([&](WasmFunction const& wasm_func) { return wasm_func.type(); }, [&](HostFunction const& host_func) { return host_func.type(); });
+                    return type.results() == other_type.results()
+                        && type.parameters() == other_type.parameters();
+                },
+                [&](TypeIndex type_index) -> bool {
+                    if (!extern_.has<FunctionAddress>())
+                        return false;
+                    auto other_type = m_store.get(extern_.get<FunctionAddress>())->visit([&](WasmFunction const& wasm_func) { return wasm_func.type(); }, [&](HostFunction const& host_func) { return host_func.type(); });
+                    auto& type = module.type(type_index);
+                    return type.results() == other_type.results()
+                        && type.parameters() == other_type.parameters();
+                });
+            if (!is_valid)
+                instantiation_result = InstantiationError { "Import and extern do not match" };
+        }
+    });
+
+    if (instantiation_result.has_value())
+        return instantiation_result.release_value();
 
     for (auto& entry : externs) {
         if (auto* ptr = entry.get_pointer<GlobalAddress>())
             auxiliary_instance.globals().append(*ptr);
+        else if (auto* ptr = entry.get_pointer<FunctionAddress>())
+            auxiliary_instance.functions().append(*ptr);
     }
 
     Vector<FunctionAddress> module_functions;
@@ -207,7 +255,7 @@ InstantiationResult AbstractMachine::instantiate(Module const& module, Vector<Ex
                 if (m_should_limit_instruction_count)
                     config.enable_instruction_count_limit();
                 config.set_frame(Frame {
-                    main_module_instance,
+                    auxiliary_instance,
                     Vector<Value> {},
                     entry,
                     entry.instructions().size(),
@@ -229,7 +277,7 @@ InstantiationResult AbstractMachine::instantiate(Module const& module, Vector<Ex
                         return IterationDecision::Continue;
                     }
                     // FIXME: type-check the reference.
-                    references.prepend(reference.release_value());
+                    references.append(reference.release_value());
                 }
             }
             elements.append(move(references));
@@ -250,17 +298,17 @@ InstantiationResult AbstractMachine::instantiate(Module const& module, Vector<Ex
             auto current_index = index;
             ++index;
             auto active_ptr = segment.mode.get_pointer<ElementSection::Active>();
-            if (!active_ptr)
+            auto elem_instance = m_store.get(main_module_instance.elements()[current_index]);
+            if (!active_ptr) {
+                if (segment.mode.has<ElementSection::Declarative>())
+                    *elem_instance = ElementInstance(elem_instance->type(), {});
                 continue;
-            if (active_ptr->index.value() != 0) {
-                instantiation_result = InstantiationError { "Non-zero table referenced by active element segment" };
-                return IterationDecision::Break;
             }
             Configuration config { m_store };
             if (m_should_limit_instruction_count)
                 config.enable_instruction_count_limit();
             config.set_frame(Frame {
-                main_module_instance,
+                auxiliary_instance,
                 Vector<Value> {},
                 active_ptr->expression,
                 1,
@@ -275,35 +323,30 @@ InstantiationResult AbstractMachine::instantiate(Module const& module, Vector<Ex
                 instantiation_result = InstantiationError { "Element section initialisation returned invalid table initial offset" };
                 return IterationDecision::Break;
             }
-            if (main_module_instance.tables().size() < 1) {
-                instantiation_result = InstantiationError { "Element section initialisation references nonexistent table" };
-                return IterationDecision::Break;
-            }
-            auto table_instance = m_store.get(main_module_instance.tables()[0]);
+            auto table_instance = m_store.get(main_module_instance.tables()[active_ptr->index.value()]);
             if (current_index >= main_module_instance.elements().size()) {
                 instantiation_result = InstantiationError { "Invalid element referenced by active element segment" };
                 return IterationDecision::Break;
             }
-            auto elem_instance = m_store.get(main_module_instance.elements()[current_index]);
             if (!table_instance || !elem_instance) {
                 instantiation_result = InstantiationError { "Invalid element referenced by active element segment" };
                 return IterationDecision::Break;
             }
 
-            auto total_required_size = elem_instance->references().size() + d.value();
+            Checked<size_t> total_size = elem_instance->references().size();
+            total_size.saturating_add(d.value());
 
-            if (table_instance->type().limits().max().value_or(total_required_size) < total_required_size) {
-                instantiation_result = InstantiationError { "Table limit overflow in active element segment" };
+            if (total_size.value() > table_instance->elements().size()) {
+                instantiation_result = InstantiationError { "Table instantiation out of bounds" };
                 return IterationDecision::Break;
             }
-
-            if (table_instance->elements().size() < total_required_size)
-                table_instance->elements().resize(total_required_size);
 
             size_t i = 0;
             for (auto it = elem_instance->references().begin(); it < elem_instance->references().end(); ++i, ++it) {
                 table_instance->elements()[i + d.value()] = *it;
             }
+            // Drop element
+            *m_store.get(main_module_instance.elements()[current_index]) = ElementInstance(elem_instance->type(), {});
         }
 
         return IterationDecision::Continue;
@@ -320,7 +363,7 @@ InstantiationResult AbstractMachine::instantiate(Module const& module, Vector<Ex
                     if (m_should_limit_instruction_count)
                         config.enable_instruction_count_limit();
                     config.set_frame(Frame {
-                        main_module_instance,
+                        auxiliary_instance,
                         Vector<Value> {},
                         data.offset,
                         1,
@@ -351,23 +394,20 @@ InstantiationResult AbstractMachine::instantiate(Module const& module, Vector<Ex
                     }
                     main_module_instance.datas().append(*maybe_data_address);
 
+                    auto address = main_module_instance.memories()[data.index.value()];
+                    auto instance = m_store.get(address);
+                    Checked<size_t> checked_offset = data.init.size();
+                    checked_offset += offset;
+                    if (checked_offset.has_overflow() || checked_offset > instance->size()) {
+                        instantiation_result = InstantiationError {
+                            ByteString::formatted("Data segment attempted to write to out-of-bounds memory ({}) in memory of size {}",
+                                offset, instance->size())
+                        };
+                        return;
+                    }
                     if (data.init.is_empty())
                         return;
-                    auto address = main_module_instance.memories()[data.index.value()];
-                    if (auto instance = m_store.get(address)) {
-                        if (auto max = instance->type().limits().max(); max.has_value()) {
-                            if (*max * Constants::page_size < data.init.size() + offset) {
-                                instantiation_result = InstantiationError {
-                                    ByteString::formatted("Data segment attempted to write to out-of-bounds memory ({}) of max {} bytes",
-                                        data.init.size() + offset, instance->type().limits().max().value())
-                                };
-                                return;
-                            }
-                        }
-                        if (instance->size() < data.init.size() + offset)
-                            instance->grow(data.init.size() + offset - instance->size());
-                        instance->data().overwrite(offset, data.init.data(), data.init.size());
-                    }
+                    instance->data().overwrite(offset, data.init.data(), data.init.size());
                 },
                 [&](DataSection::Data::Passive const& passive) {
                     auto maybe_data_address = m_store.allocate_data(passive.init);
@@ -387,7 +427,9 @@ InstantiationResult AbstractMachine::instantiate(Module const& module, Vector<Ex
             instantiation_result = InstantiationError { ByteString::formatted("Start section function referenced invalid index {} of max {} entries", index.value(), functions.size()) };
             return;
         }
-        invoke(functions[index.value()], {});
+        auto result = invoke(functions[index.value()], {});
+        if (result.is_trap())
+            instantiation_result = InstantiationError { ByteString::formatted("Start function trapped: {}", result.trap().reason) };
     });
 
     if (instantiation_result.has_value())

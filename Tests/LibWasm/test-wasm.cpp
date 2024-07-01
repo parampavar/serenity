@@ -80,19 +80,69 @@ private:
 
     static HashMap<Wasm::Linker::Name, Wasm::ExternValue> const& spec_test_namespace()
     {
-        if (!s_spec_test_namespace.is_empty())
-            return s_spec_test_namespace;
-        Wasm::FunctionType print_i32_type { { Wasm::ValueType(Wasm::ValueType::I32) }, {} };
+        Wasm::FunctionType print_type { {}, {} };
+        auto address_print = alloc_noop_function(print_type);
+        s_spec_test_namespace.set({ "spectest", "print", print_type }, Wasm::ExternValue { *address_print });
 
-        auto address = m_machine.store().allocate(Wasm::HostFunction {
+        Wasm::FunctionType print_i32_type { { Wasm::ValueType(Wasm::ValueType::I32) }, {} };
+        auto address_i32 = alloc_noop_function(print_i32_type);
+        s_spec_test_namespace.set({ "spectest", "print_i32", print_i32_type }, Wasm::ExternValue { *address_i32 });
+
+        Wasm::FunctionType print_i64_type { { Wasm::ValueType(Wasm::ValueType::I64) }, {} };
+        auto address_i64 = alloc_noop_function(print_i64_type);
+        s_spec_test_namespace.set({ "spectest", "print_i64", print_i64_type }, Wasm::ExternValue { *address_i64 });
+
+        Wasm::FunctionType print_f32_type { { Wasm::ValueType(Wasm::ValueType::F32) }, {} };
+        auto address_f32 = alloc_noop_function(print_f32_type);
+        s_spec_test_namespace.set({ "spectest", "print_f32", print_f32_type }, Wasm::ExternValue { *address_f32 });
+
+        Wasm::FunctionType print_f64_type { { Wasm::ValueType(Wasm::ValueType::F64) }, {} };
+        auto address_f64 = alloc_noop_function(print_f64_type);
+        s_spec_test_namespace.set({ "spectest", "print_f64", print_f64_type }, Wasm::ExternValue { *address_f64 });
+
+        Wasm::FunctionType print_i32_f32_type { { Wasm::ValueType(Wasm::ValueType::I32), Wasm::ValueType(Wasm::ValueType::F32) }, {} };
+        auto address_i32_f32 = alloc_noop_function(print_i32_f32_type);
+        s_spec_test_namespace.set({ "spectest", "print_i32_f32", print_i32_f32_type }, Wasm::ExternValue { *address_i32_f32 });
+
+        Wasm::FunctionType print_f64_f64_type { { Wasm::ValueType(Wasm::ValueType::F64), Wasm::ValueType(Wasm::ValueType::F64) }, {} };
+        auto address_f64_f64 = alloc_noop_function(print_f64_f64_type);
+        s_spec_test_namespace.set({ "spectest", "print_f64_f64", print_f64_f64_type }, Wasm::ExternValue { *address_f64_f64 });
+
+        Wasm::TableType table_type { Wasm::ValueType(Wasm::ValueType::FunctionReference), Wasm::Limits(10, 20) };
+        auto table_address = m_machine.store().allocate(table_type);
+        s_spec_test_namespace.set({ "spectest", "table", table_type }, Wasm::ExternValue { *table_address });
+
+        Wasm::MemoryType memory_type { Wasm::Limits(1, 2) };
+        auto memory_address = m_machine.store().allocate(memory_type);
+        s_spec_test_namespace.set({ "spectest", "memory", memory_type }, Wasm::ExternValue { *memory_address });
+
+        Wasm::GlobalType global_i32 { Wasm::ValueType(Wasm::ValueType::I32), false };
+        auto global_i32_address = m_machine.store().allocate(global_i32, Wasm::Value(666));
+        s_spec_test_namespace.set({ "spectest", "global_i32", global_i32 }, Wasm::ExternValue { *global_i32_address });
+
+        Wasm::GlobalType global_i64 { Wasm::ValueType(Wasm::ValueType::I64), false };
+        auto global_i64_address = m_machine.store().allocate(global_i64, Wasm::Value((i64)666));
+        s_spec_test_namespace.set({ "spectest", "global_i64", global_i64 }, Wasm::ExternValue { *global_i64_address });
+
+        Wasm::GlobalType global_f32 { Wasm::ValueType(Wasm::ValueType::F32), false };
+        auto global_f32_address = m_machine.store().allocate(global_f32, Wasm::Value(666.6f));
+        s_spec_test_namespace.set({ "spectest", "global_f32", global_f32 }, Wasm::ExternValue { *global_f32_address });
+
+        Wasm::GlobalType global_f64 { Wasm::ValueType(Wasm::ValueType::F64), false };
+        auto global_f64_address = m_machine.store().allocate(global_f64, Wasm::Value(666.6));
+        s_spec_test_namespace.set({ "spectest", "global_f64", global_f64 }, Wasm::ExternValue { *global_f64_address });
+
+        return s_spec_test_namespace;
+    }
+
+    static Optional<Wasm::FunctionAddress> alloc_noop_function(Wasm::FunctionType type)
+    {
+        return m_machine.store().allocate(Wasm::HostFunction {
             [](auto&, auto&) -> Wasm::Result {
                 // Noop, this just needs to exist.
                 return Wasm::Result { Vector<Wasm::Value> {} };
             },
-            print_i32_type });
-        s_spec_test_namespace.set({ "spectest", "print_i32", print_i32_type }, Wasm::ExternValue { *address });
-
-        return s_spec_test_namespace;
+            type });
     }
 
     static HashMap<Wasm::Linker::Name, Wasm::ExternValue> s_spec_test_namespace;
@@ -234,18 +284,29 @@ JS_DEFINE_NATIVE_FUNCTION(WebAssemblyModule::wasm_invoke)
                     argument = TRY(argument.to_bigint(vm));
             }
 
-            u128 bits;
-            (void)argument.as_bigint().big_integer().unsigned_value().export_data({ bit_cast<u8*>(&bits), sizeof(bits) });
+            u128 bits = 0;
+            auto bytes = argument.as_bigint().big_integer().unsigned_value().export_data({ bit_cast<u8*>(&bits), sizeof(bits) });
             VERIFY(!argument.as_bigint().big_integer().is_negative());
 
-            arguments.append(Wasm::Value(bits));
+            if constexpr (AK::HostIsLittleEndian)
+                arguments.append(Wasm::Value(bits << (128 - bytes * 8)));
+            else
+                arguments.append(Wasm::Value(bits >> (128 - bytes * 8)));
             break;
         }
         case Wasm::ValueType::Kind::FunctionReference:
+            if (argument.is_null()) {
+                arguments.append(Wasm::Value(Wasm::Reference { Wasm::Reference::Null { Wasm::ValueType(Wasm::ValueType::Kind::FunctionReference) } }));
+                break;
+            }
             arguments.append(Wasm::Value(Wasm::Reference { Wasm::Reference::Func { static_cast<u64>(double_value) } }));
             break;
         case Wasm::ValueType::Kind::ExternReference:
-            arguments.append(Wasm::Value(Wasm::Reference { Wasm::Reference::Func { static_cast<u64>(double_value) } }));
+            if (argument.is_null()) {
+                arguments.append(Wasm::Value(Wasm::Reference { Wasm::Reference::Null { Wasm::ValueType(Wasm::ValueType::Kind::ExternReference) } }));
+                break;
+            }
+            arguments.append(Wasm::Value(Wasm::Reference { Wasm::Reference::Extern { static_cast<u64>(double_value) } }));
             break;
         case Wasm::ValueType::Kind::NullFunctionReference:
             arguments.append(Wasm::Value(Wasm::Reference { Wasm::Reference::Null { Wasm::ValueType(Wasm::ValueType::Kind::FunctionReference) } }));

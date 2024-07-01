@@ -103,24 +103,46 @@ ALWAYS_INLINE ThrowCompletionOr<NonnullGCPtr<Object>> base_object_for_get(VM& vm
     return throw_null_or_undefined_property_access(vm, base_value, base_identifier, property_identifier);
 }
 
+enum class GetByIdMode {
+    Normal,
+    Length,
+};
+
+template<GetByIdMode mode = GetByIdMode::Normal>
 inline ThrowCompletionOr<Value> get_by_id(VM& vm, Optional<DeprecatedFlyString const&> const& base_identifier, DeprecatedFlyString const& property, Value base_value, Value this_value, PropertyLookupCache& cache)
 {
-    if (base_value.is_string()) {
-        auto string_value = TRY(base_value.as_string().get(vm, property));
-        if (string_value.has_value())
-            return *string_value;
+    if constexpr (mode == GetByIdMode::Length) {
+        if (base_value.is_string()) {
+            return Value(base_value.as_string().utf16_string().length_in_code_units());
+        }
     }
 
     auto base_obj = TRY(base_object_for_get(vm, base_value, base_identifier, property));
 
-    // OPTIMIZATION: Fast path for the magical "length" property on Array objects.
-    if (base_obj->has_magical_length_property() && property == vm.names.length.as_string()) {
-        return Value { base_obj->indexed_properties().array_like_size() };
+    if constexpr (mode == GetByIdMode::Length) {
+        // OPTIMIZATION: Fast path for the magical "length" property on Array objects.
+        if (base_obj->has_magical_length_property()) {
+            return Value { base_obj->indexed_properties().array_like_size() };
+        }
     }
 
-    // OPTIMIZATION: If the shape of the object hasn't changed, we can use the cached property offset.
     auto& shape = base_obj->shape();
-    if (&shape == cache.shape) {
+
+    if (cache.prototype) {
+        // OPTIMIZATION: If the prototype chain hasn't been mutated in a way that would invalidate the cache, we can use it.
+        bool can_use_cache = [&]() -> bool {
+            if (&shape != cache.shape)
+                return false;
+            if (!cache.prototype_chain_validity)
+                return false;
+            if (!cache.prototype_chain_validity->is_valid())
+                return false;
+            return true;
+        }();
+        if (can_use_cache)
+            return cache.prototype->get_direct(cache.property_offset.value());
+    } else if (&shape == cache.shape) {
+        // OPTIMIZATION: If the shape of the object hasn't changed, we can use the cached property offset.
         return base_obj->get_direct(cache.property_offset.value());
     }
 
@@ -128,8 +150,15 @@ inline ThrowCompletionOr<Value> get_by_id(VM& vm, Optional<DeprecatedFlyString c
     auto value = TRY(base_obj->internal_get(property, this_value, &cacheable_metadata));
 
     if (cacheable_metadata.type == CacheablePropertyMetadata::Type::OwnProperty) {
+        cache = {};
         cache.shape = shape;
         cache.property_offset = cacheable_metadata.property_offset.value();
+    } else if (cacheable_metadata.type == CacheablePropertyMetadata::Type::InPrototypeChain) {
+        cache = {};
+        cache.shape = &base_obj->shape();
+        cache.property_offset = cacheable_metadata.property_offset.value();
+        cache.prototype = *cacheable_metadata.prototype;
+        cache.prototype_chain_validity = *cacheable_metadata.prototype->shape().prototype_chain_validity();
     }
 
     return value;
@@ -147,7 +176,12 @@ inline ThrowCompletionOr<Value> get_by_value(VM& vm, Optional<DeprecatedFlyStrin
         // For "non-typed arrays":
         if (!object.may_interfere_with_indexed_property_access()
             && object_storage) {
-            auto maybe_value = object_storage->get(index);
+            auto maybe_value = [&] {
+                if (object_storage->is_simple_storage())
+                    return static_cast<SimpleIndexedPropertyStorage const*>(object_storage)->inline_get(index);
+                else
+                    return static_cast<GenericIndexedPropertyStorage const*>(object_storage)->get(index);
+            }();
             if (maybe_value.has_value()) {
                 auto value = maybe_value->value;
                 if (!value.is_accessor())
@@ -205,7 +239,7 @@ inline ThrowCompletionOr<Value> get_by_value(VM& vm, Optional<DeprecatedFlyStrin
     return TRY(object->internal_get(property_key, base_value));
 }
 
-inline ThrowCompletionOr<Value> get_global(Bytecode::Interpreter& interpreter, DeprecatedFlyString const& identifier, GlobalVariableCache& cache)
+inline ThrowCompletionOr<Value> get_global(Interpreter& interpreter, IdentifierTableIndex identifier_index, GlobalVariableCache& cache)
 {
     auto& vm = interpreter.vm();
     auto& binding_object = interpreter.global_object();
@@ -219,6 +253,8 @@ inline ThrowCompletionOr<Value> get_global(Bytecode::Interpreter& interpreter, D
     }
 
     cache.environment_serial_number = declarative_record.environment_serial_number();
+
+    auto& identifier = interpreter.current_executable().get_identifier(identifier_index);
 
     if (vm.running_execution_context().script_or_module.has<NonnullGCPtr<Module>>()) {
         // NOTE: GetGlobal is used to access variables stored in the module environment and global environment.
@@ -353,48 +389,7 @@ inline ThrowCompletionOr<void> throw_if_needed_for_call(Interpreter& interpreter
     return {};
 }
 
-inline ThrowCompletionOr<Value> typeof_variable(VM& vm, DeprecatedFlyString const& string)
-{
-    // 1. Let val be the result of evaluating UnaryExpression.
-    auto reference = TRY(vm.resolve_binding(string));
-
-    // 2. If val is a Reference Record, then
-    //    a. If IsUnresolvableReference(val) is true, return "undefined".
-    if (reference.is_unresolvable())
-        return PrimitiveString::create(vm, "undefined"_string);
-
-    // 3. Set val to ? GetValue(val).
-    auto value = TRY(reference.get_value(vm));
-
-    // 4. NOTE: This step is replaced in section B.3.6.3.
-    // 5. Return a String according to Table 41.
-    return PrimitiveString::create(vm, value.typeof());
-}
-
-inline ThrowCompletionOr<void> set_variable(
-    VM& vm,
-    DeprecatedFlyString const& name,
-    Value value,
-    Op::EnvironmentMode mode,
-    Op::SetVariable::InitializationMode initialization_mode,
-    EnvironmentVariableCache& cache)
-{
-    auto environment = mode == Op::EnvironmentMode::Lexical ? vm.running_execution_context().lexical_environment : vm.running_execution_context().variable_environment;
-    auto reference = TRY(vm.resolve_binding(name, environment));
-    if (reference.environment_coordinate().has_value())
-        cache = reference.environment_coordinate();
-    switch (initialization_mode) {
-    case Op::SetVariable::InitializationMode::Initialize:
-        TRY(reference.initialize_referenced_binding(vm, value));
-        break;
-    case Op::SetVariable::InitializationMode::Set:
-        TRY(reference.put_value(vm, value));
-        break;
-    }
-    return {};
-}
-
-inline Value new_function(VM& vm, FunctionExpression const& function_node, Optional<IdentifierTableIndex> const& lhs_name, Optional<Operand> const& home_object)
+inline Value new_function(VM& vm, FunctionNode const& function_node, Optional<IdentifierTableIndex> const& lhs_name, Optional<Operand> const& home_object)
 {
     Value value;
 
@@ -404,7 +399,8 @@ inline Value new_function(VM& vm, FunctionExpression const& function_node, Optio
             name = vm.bytecode_interpreter().current_executable().get_identifier(lhs_name.value());
         value = function_node.instantiate_ordinary_function_expression(vm, name);
     } else {
-        value = ECMAScriptFunctionObject::create(*vm.current_realm(), function_node.name(), function_node.source_text(), function_node.body(), function_node.parameters(), function_node.function_length(), function_node.local_variables_names(), vm.lexical_environment(), vm.running_execution_context().private_environment, function_node.kind(), function_node.is_strict_mode(), function_node.might_need_arguments_object(), function_node.contains_direct_call_to_eval(), function_node.is_arrow_function());
+        value = ECMAScriptFunctionObject::create(*vm.current_realm(), function_node.name(), function_node.source_text(), function_node.body(), function_node.parameters(), function_node.function_length(), function_node.local_variables_names(), vm.lexical_environment(), vm.running_execution_context().private_environment, function_node.kind(), function_node.is_strict_mode(),
+            function_node.parsing_insights(), function_node.is_arrow_function());
     }
 
     if (home_object.has_value()) {
@@ -497,48 +493,24 @@ inline ThrowCompletionOr<void> put_by_value(VM& vm, Value base, Optional<Depreca
     return {};
 }
 
-inline ThrowCompletionOr<Value> get_variable(Bytecode::Interpreter& interpreter, DeprecatedFlyString const& name, EnvironmentVariableCache& cache)
-{
-    auto& vm = interpreter.vm();
-
-    if (cache.has_value()) {
-        auto environment = vm.running_execution_context().lexical_environment;
-        for (size_t i = 0; i < cache->hops; ++i)
-            environment = environment->outer_environment();
-        VERIFY(environment);
-        VERIFY(environment->is_declarative_environment());
-        if (!environment->is_permanently_screwed_by_eval()) {
-            return TRY(verify_cast<DeclarativeEnvironment>(*environment).get_binding_value_direct(vm, cache.value().index, vm.in_strict_mode()));
-        }
-        cache = {};
-    }
-
-    auto reference = TRY(vm.resolve_binding(name));
-    if (reference.environment_coordinate().has_value())
-        cache = reference.environment_coordinate();
-    return TRY(reference.get_value(vm));
-}
-
 struct CalleeAndThis {
     Value callee;
     Value this_value;
 };
 
-inline ThrowCompletionOr<CalleeAndThis> get_callee_and_this_from_environment(Bytecode::Interpreter& interpreter, DeprecatedFlyString const& name, EnvironmentVariableCache& cache)
+inline ThrowCompletionOr<CalleeAndThis> get_callee_and_this_from_environment(Bytecode::Interpreter& interpreter, DeprecatedFlyString const& name, EnvironmentCoordinate& cache)
 {
     auto& vm = interpreter.vm();
 
     Value callee = js_undefined();
     Value this_value = js_undefined();
 
-    if (cache.has_value()) {
-        auto environment = vm.running_execution_context().lexical_environment;
-        for (size_t i = 0; i < cache->hops; ++i)
+    if (cache.is_valid()) {
+        auto const* environment = interpreter.running_execution_context().lexical_environment.ptr();
+        for (size_t i = 0; i < cache.hops; ++i)
             environment = environment->outer_environment();
-        VERIFY(environment);
-        VERIFY(environment->is_declarative_environment());
         if (!environment->is_permanently_screwed_by_eval()) {
-            callee = TRY(verify_cast<DeclarativeEnvironment>(*environment).get_binding_value_direct(vm, cache.value().index, vm.in_strict_mode()));
+            callee = TRY(static_cast<DeclarativeEnvironment const&>(*environment).get_binding_value_direct(vm, cache.index));
             this_value = js_undefined();
             if (auto base_object = environment->with_base_object())
                 this_value = base_object;
@@ -552,7 +524,7 @@ inline ThrowCompletionOr<CalleeAndThis> get_callee_and_this_from_environment(Byt
 
     auto reference = TRY(vm.resolve_binding(name));
     if (reference.environment_coordinate().has_value())
-        cache = reference.environment_coordinate();
+        cache = reference.environment_coordinate().value();
 
     callee = TRY(reference.get_value(vm));
 
@@ -640,7 +612,7 @@ inline ThrowCompletionOr<void> create_variable(VM& vm, DeprecatedFlyString const
     return verify_cast<GlobalEnvironment>(vm.variable_environment())->create_global_var_binding(name, false);
 }
 
-inline ThrowCompletionOr<ECMAScriptFunctionObject*> new_class(VM& vm, Value super_class, ClassExpression const& class_expression, Optional<IdentifierTableIndex> const& lhs_name)
+inline ThrowCompletionOr<ECMAScriptFunctionObject*> new_class(VM& vm, Value super_class, ClassExpression const& class_expression, Optional<IdentifierTableIndex> const& lhs_name, ReadonlySpan<Value> element_keys)
 {
     auto& interpreter = vm.bytecode_interpreter();
     auto name = class_expression.name();
@@ -658,7 +630,7 @@ inline ThrowCompletionOr<ECMAScriptFunctionObject*> new_class(VM& vm, Value supe
         class_name = name.is_null() ? ""sv : name;
     }
 
-    return TRY(class_expression.create_class_constructor(vm, class_environment, vm.lexical_environment(), super_class, binding_name, class_name));
+    return TRY(class_expression.create_class_constructor(vm, class_environment, vm.lexical_environment(), super_class, element_keys, binding_name, class_name));
 }
 
 // 13.3.7.1 Runtime Semantics: Evaluation, https://tc39.es/ecma262/#sec-super-keyword-runtime-semantics-evaluation

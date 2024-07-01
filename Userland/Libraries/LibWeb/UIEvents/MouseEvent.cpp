@@ -6,11 +6,11 @@
  */
 
 #include <Kernel/API/KeyCode.h>
-#include <LibGUI/Event.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/MouseEventPrototype.h>
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/UIEvents/EventNames.h>
+#include <LibWeb/UIEvents/MouseButton.h>
 #include <LibWeb/UIEvents/MouseEvent.h>
 
 namespace Web::UIEvents {
@@ -45,6 +45,7 @@ MouseEvent::MouseEvent(JS::Realm& realm, FlyString const& event_name, MouseEvent
     , m_movement_y(event_init.movement_y)
     , m_button(event_init.button)
     , m_buttons(event_init.buttons)
+    , m_related_target(event_init.related_target)
 {
     set_event_characteristics();
 }
@@ -55,6 +56,12 @@ void MouseEvent::initialize(JS::Realm& realm)
 {
     Base::initialize(realm);
     WEB_SET_PROTOTYPE_FOR_INTERFACE(MouseEvent);
+}
+
+void MouseEvent::visit_edges(Cell::Visitor& visitor)
+{
+    Base::visit_edges(visitor);
+    visitor.visit(m_related_target);
 }
 
 bool MouseEvent::get_modifier_state(String const& key_arg) const
@@ -94,15 +101,15 @@ bool MouseEvent::get_modifier_state(String const& key_arg) const
 static i16 determine_button(unsigned mouse_button)
 {
     switch (mouse_button) {
-    case GUI::MouseButton::Primary:
+    case MouseButton::Primary:
         return 0;
-    case GUI::MouseButton::Middle:
+    case MouseButton::Middle:
         return 1;
-    case GUI::MouseButton::Secondary:
+    case MouseButton::Secondary:
         return 2;
-    case GUI::MouseButton::Backward:
+    case MouseButton::Backward:
         return 3;
-    case GUI::MouseButton::Forward:
+    case MouseButton::Forward:
         return 4;
     default:
         VERIFY_NOT_REACHED();

@@ -22,6 +22,9 @@ public:
     [[nodiscard]] static JS::NonnullGCPtr<SVGTransformList> create(JS::Realm& realm);
     virtual ~SVGTransformList() override;
 
+    WebIDL::UnsignedLong length();
+    WebIDL::UnsignedLong number_of_items();
+
     WebIDL::ExceptionOr<JS::NonnullGCPtr<SVGTransform>> get_item(WebIDL::UnsignedLong index);
 
     JS::NonnullGCPtr<SVGTransform> append_item(JS::NonnullGCPtr<SVGTransform> new_item);

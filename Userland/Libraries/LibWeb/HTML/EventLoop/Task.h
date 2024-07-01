@@ -16,7 +16,7 @@ namespace Web::HTML {
 struct UniqueTaskSource;
 
 class Task final : public JS::Cell {
-    JS_CELL(Task, Cell);
+    JS_CELL(Task, JS::Cell);
     JS_DECLARE_ALLOCATOR(Task);
 
 public:
@@ -53,6 +53,12 @@ public:
 
         // https://w3c.github.io/permissions/#permissions-task-source
         Permissions,
+
+        // https://drafts.csswg.org/css-font-loading/#task-source
+        FontLoading,
+
+        // https://html.spec.whatwg.org/multipage/server-sent-events.html#remote-event-task-source
+        RemoteEvent,
 
         // !!! IMPORTANT: Keep this field last!
         // This serves as the base value of all unique task sources.

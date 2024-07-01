@@ -13,6 +13,7 @@
 #include <LibURL/URL.h>
 #include <LibWeb/Bindings/HTMLLinkElementPrototype.h>
 #include <LibWeb/CSS/Parser/Parser.h>
+#include <LibWeb/DOM/DOMTokenList.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/DOM/ShadowRoot.h>
@@ -89,6 +90,38 @@ void HTMLLinkElement::inserted()
     }
 }
 
+// https://html.spec.whatwg.org/multipage/semantics.html#dom-link-as
+String HTMLLinkElement::as() const
+{
+    String attribute_value = get_attribute_value(HTML::AttributeNames::as);
+
+    if (attribute_value.equals_ignoring_ascii_case("fetch"sv)
+        || attribute_value.equals_ignoring_ascii_case("image"sv)
+        || attribute_value.equals_ignoring_ascii_case("script"sv)
+        || attribute_value.equals_ignoring_ascii_case("style"sv)
+        || attribute_value.equals_ignoring_ascii_case("video"sv)
+        || attribute_value.equals_ignoring_ascii_case("audio"sv)
+        || attribute_value.equals_ignoring_ascii_case("track"sv)
+        || attribute_value.equals_ignoring_ascii_case("font"sv))
+        return attribute_value.to_lowercase().release_value();
+
+    return String {};
+}
+
+WebIDL::ExceptionOr<void> HTMLLinkElement::set_as(String const& value)
+{
+    return set_attribute(HTML::AttributeNames::as, move(value));
+}
+
+// https://html.spec.whatwg.org/multipage/semantics.html#dom-link-rellist
+JS::NonnullGCPtr<DOM::DOMTokenList> HTMLLinkElement::rel_list()
+{
+    // The relList IDL attribute must reflect the rel content attribute.
+    if (!m_rel_list)
+        m_rel_list = DOM::DOMTokenList::create(*this, HTML::AttributeNames::rel);
+    return *m_rel_list;
+}
+
 bool HTMLLinkElement::has_loaded_icon() const
 {
     return m_relationship & Relationship::Icon && resource() && resource()->is_loaded() && resource()->has_encoded_data();
@@ -121,6 +154,9 @@ void HTMLLinkElement::attribute_changed(FlyString const& name, Optional<String> 
             else if (part == "icon"sv)
                 m_relationship |= Relationship::Icon;
         }
+
+        if (m_rel_list)
+            m_rel_list->associated_attribute_changed(value.value_or(String {}));
     }
 
     // https://html.spec.whatwg.org/multipage/semantics.html#the-link-element:explicitly-enabled
@@ -184,7 +220,8 @@ HTMLLinkElement::LinkProcessingOptions HTMLLinkElement::create_link_options()
     // FIXME: destination                      the result of translating the state of el's as attribute
     // crossorigin                      the state of el's crossorigin content attribute
     options.crossorigin = cors_setting_attribute_from_keyword(get_attribute(AttributeNames::crossorigin));
-    // FIXME: referrer policy                  the state of el's referrerpolicy content attribute
+    // referrer policy                  the state of el's referrerpolicy content attribute
+    options.referrer_policy = ReferrerPolicy::from_string(get_attribute(AttributeNames::referrerpolicy).value_or(""_string)).value_or(ReferrerPolicy::ReferrerPolicy::EmptyString);
     // FIXME: source set                       el's source set
     // base URL                         document's URL
     options.base_url = document.url();
@@ -197,6 +234,8 @@ HTMLLinkElement::LinkProcessingOptions HTMLLinkElement::create_link_options()
     // document                         document
     options.document = &document;
     // FIXME: cryptographic nonce metadata     The current value of el's [[CryptographicNonce]] internal slot
+    // fetch priority                   the state of el's fetchpriority content attribute
+    options.fetch_priority = Fetch::Infrastructure::request_priority_from_string(get_attribute_value(HTML::AttributeNames::fetchpriority)).value_or(Fetch::Infrastructure::Request::Priority::Auto);
 
     // 3. If el has an href attribute, then set options's href to the value of el's href attribute.
     if (auto maybe_href = get_attribute(AttributeNames::href); maybe_href.has_value())
@@ -221,33 +260,39 @@ HTMLLinkElement::LinkProcessingOptions HTMLLinkElement::create_link_options()
 JS::GCPtr<Fetch::Infrastructure::Request> HTMLLinkElement::create_link_request(HTMLLinkElement::LinkProcessingOptions const& options)
 {
     // 1. Assert: options's href is not the empty string.
+    VERIFY(!options.href.is_empty());
 
-    // FIXME: 2. If options's destination is not a destination, then return null.
+    // FIXME: 2. If options's destination is null, then return null.
 
-    // 3. Parse a URL given options's href, relative to options's base URL. If that fails, then return null. Otherwise, let url be the resulting URL record.
+    // 3. Let url be the result of encoding-parsing a URL given options's href, relative to options's base URL.
     auto url = options.base_url.complete_url(options.href);
+
+    // 4. If url is failure, then return null.
     if (!url.is_valid())
         return nullptr;
 
-    // 4. Let request be the result of creating a potential-CORS request given url, options's destination, and options's crossorigin.
+    // 5. Let request be the result of creating a potential-CORS request given url, options's destination, and options's crossorigin.
     auto request = create_potential_CORS_request(vm(), url, options.destination, options.crossorigin);
 
-    // 5. Set request's policy container to options's policy container.
+    // 6. Set request's policy container to options's policy container.
     request->set_policy_container(options.policy_container);
 
-    // 6. Set request's integrity metadata to options's integrity.
+    // 7. Set request's integrity metadata to options's integrity.
     request->set_integrity_metadata(options.integrity);
 
-    // 7. Set request's cryptographic nonce metadata to options's cryptographic nonce metadata.
+    // 8. Set request's cryptographic nonce metadata to options's cryptographic nonce metadata.
     request->set_cryptographic_nonce_metadata(options.cryptographic_nonce_metadata);
 
-    // 8. Set request's referrer policy to options's referrer policy.
+    // 9. Set request's referrer policy to options's referrer policy.
     request->set_referrer_policy(options.referrer_policy);
 
-    // 9. Set request's client to options's environment.
+    // 10. Set request's client to options's environment.
     request->set_client(options.environment);
 
-    // 10. Return request.
+    // 11. Set request's priority to options's fetch priority.
+    request->set_priority(options.fetch_priority);
+
+    // 12. Return request.
     return request;
 }
 
@@ -535,7 +580,7 @@ WebIDL::ExceptionOr<void> HTMLLinkElement::load_fallback_favicon_if_needed(JS::N
         auto process_body = JS::create_heap_function(realm.heap(), [document, request](ByteBuffer body) {
             (void)decode_favicon(body, request->url(), document->navigable());
         });
-        auto process_body_error = JS::create_heap_function(realm.heap(), [](JS::GCPtr<WebIDL::DOMException>) {
+        auto process_body_error = JS::create_heap_function(realm.heap(), [](JS::Value) {
         });
 
         // 3. Use response's unsafe response as an icon as if it had been declared using the icon keyword.
@@ -551,6 +596,7 @@ void HTMLLinkElement::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_loaded_style_sheet);
+    visitor.visit(m_rel_list);
 }
 
 }

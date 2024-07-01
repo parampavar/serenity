@@ -9,7 +9,7 @@
 #include <AK/Debug.h>
 #include <AK/Endian.h>
 #include <AK/String.h>
-#include <LibCompress/LZWDecoder.h>
+#include <LibCompress/Lzw.h>
 #include <LibCompress/PackBitsDecoder.h>
 #include <LibCompress/Zlib.h>
 #include <LibGfx/CMYKBitmap.h>
@@ -34,6 +34,11 @@ CCITT::Group3Options parse_t4_options(u32 bit_field)
         options.use_fill_bits = CCITT::Group3Options::UseFillBits::Yes;
 
     return options;
+}
+
+bool is_bilevel(TIFF::PhotometricInterpretation interpretation)
+{
+    return interpretation == TIFF::PhotometricInterpretation::WhiteIsZero || interpretation == TIFF::PhotometricInterpretation::BlackIsZero;
 }
 
 }
@@ -103,14 +108,22 @@ public:
         if (!m_metadata.rows_per_strip().has_value() && segment_byte_counts()->size() != 1 && !is_tiled())
             return Error::from_string_literal("TIFFImageDecoderPlugin: RowsPerStrip is not provided and impossible to deduce");
 
-        if (any_of(*m_metadata.bits_per_sample(), [](auto bit_depth) { return bit_depth == 0 || bit_depth > 32; }))
-            return Error::from_string_literal("TIFFImageDecoderPlugin: Invalid value in BitsPerSample");
+        if (!is_bilevel(*m_metadata.photometric_interpretation())) {
+            if (!m_metadata.bits_per_sample().has_value())
+                return Error::from_string_literal("TIFFImageDecoderPlugin: Tag BitsPerSample is missing");
 
-        if (m_metadata.bits_per_sample()->size() != m_metadata.samples_per_pixel())
-            return Error::from_string_literal("TIFFImageDecoderPlugin: Invalid number of values in BitsPerSample");
+            if (!m_metadata.samples_per_pixel().has_value())
+                return Error::from_string_literal("TIFFImageDecoderPlugin: Tag SamplesPerPixel is missing");
 
-        if (*m_metadata.samples_per_pixel() < samples_for_photometric_interpretation())
-            return Error::from_string_literal("TIFFImageDecoderPlugin: Not enough values in BitsPerSample for given PhotometricInterpretation");
+            if (any_of(*m_metadata.bits_per_sample(), [](auto bit_depth) { return bit_depth == 0 || bit_depth > 32; }))
+                return Error::from_string_literal("TIFFImageDecoderPlugin: Invalid value in BitsPerSample");
+
+            if (m_metadata.bits_per_sample()->size() != m_metadata.samples_per_pixel())
+                return Error::from_string_literal("TIFFImageDecoderPlugin: Invalid number of values in BitsPerSample");
+
+            if (*m_metadata.samples_per_pixel() < samples_for_photometric_interpretation())
+                return Error::from_string_literal("TIFFImageDecoderPlugin: Not enough values in BitsPerSample for given PhotometricInterpretation");
+        }
 
         return {};
     }
@@ -121,6 +134,8 @@ public:
             m_photometric_interpretation = m_metadata.photometric_interpretation().value();
         if (m_metadata.bits_per_sample().has_value())
             m_bits_per_sample = m_metadata.bits_per_sample().value();
+        else if (is_bilevel(m_photometric_interpretation))
+            m_bits_per_sample.append(1);
         if (m_metadata.image_width().has_value())
             m_image_width = m_metadata.image_width().value();
         if (m_metadata.predictor().has_value())
@@ -380,9 +395,9 @@ private:
     {
         // Section 8: Baseline Field Reference Guide
         // BitsPerSample must be 1, since this type of compression is defined only for bilevel images.
-        if (m_metadata.bits_per_sample()->size() > 1)
+        if (m_bits_per_sample.size() > 1)
             return Error::from_string_literal("TIFFImageDecoderPlugin: CCITT image with BitsPerSample greater than one");
-        if (m_metadata.photometric_interpretation() != PhotometricInterpretation::WhiteIsZero && m_metadata.photometric_interpretation() != PhotometricInterpretation::BlackIsZero)
+        if (!is_bilevel(*m_metadata.photometric_interpretation()))
             return Error::from_string_literal("TIFFImageDecoderPlugin: CCITT compression is used on a non bilevel image");
 
         return {};
@@ -475,9 +490,9 @@ private:
                 //       Fortunately, as the first byte of a LZW stream is a constant we can guess the endianess
                 //       and deduce the version from it. The first code is 0x100 (9-bits).
                 if (encoded_bytes[0] == 0x00)
-                    decoded_bytes = TRY(Compress::LZWDecoder<LittleEndianInputBitStream>::decode_all(encoded_bytes, 8, 0));
+                    decoded_bytes = TRY(Compress::LzwDecompressor<LittleEndianInputBitStream>::decompress_all(encoded_bytes, 8, 0));
                 else
-                    decoded_bytes = TRY(Compress::LZWDecoder<BigEndianInputBitStream>::decode_all(encoded_bytes, 8, -1));
+                    decoded_bytes = TRY(Compress::LzwDecompressor<BigEndianInputBitStream>::decompress_all(encoded_bytes, 8, -1));
 
                 return decoded_bytes;
             };
@@ -732,6 +747,8 @@ TIFFImageDecoderPlugin::TIFFImageDecoderPlugin(NonnullOwnPtr<FixedMemoryStream> 
 {
     m_context = make<TIFF::TIFFLoadingContext>(move(stream));
 }
+
+TIFFImageDecoderPlugin::~TIFFImageDecoderPlugin() = default;
 
 bool TIFFImageDecoderPlugin::sniff(ReadonlyBytes bytes)
 {

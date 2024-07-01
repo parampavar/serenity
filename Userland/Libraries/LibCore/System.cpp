@@ -374,7 +374,7 @@ ErrorOr<void> profiling_free_buffer(pid_t pid)
 }
 #endif
 
-#if !defined(AK_OS_BSD_GENERIC) && !defined(AK_OS_ANDROID)
+#if !defined(AK_OS_BSD_GENERIC)
 ErrorOr<Optional<struct spwd>> getspent()
 {
     errno = 0;
@@ -595,6 +595,13 @@ ErrorOr<void> ftruncate(int fd, off_t length)
 {
     if (::ftruncate(fd, length) < 0)
         return Error::from_syscall("ftruncate"sv, -errno);
+    return {};
+}
+
+ErrorOr<void> fsync(int fd)
+{
+    if (::fsync(fd) < 0)
+        return Error::from_syscall("fsync"sv, -errno);
     return {};
 }
 
@@ -1257,7 +1264,7 @@ ErrorOr<struct utsname> uname()
     return uts;
 }
 
-#if !defined(AK_OS_ANDROID) && !defined(AK_OS_HAIKU)
+#if !defined(AK_OS_HAIKU)
 ErrorOr<void> adjtime(const struct timeval* delta, struct timeval* old_delta)
 {
 #    ifdef AK_OS_SERENITY
@@ -1622,7 +1629,7 @@ ErrorOr<void> mknod(StringView pathname, mode_t mode, dev_t dev)
         return Error::from_syscall("mknod"sv, -EFAULT);
 
 #ifdef AK_OS_SERENITY
-    Syscall::SC_mknod_params params { { pathname.characters_without_null_termination(), pathname.length() }, mode, dev };
+    Syscall::SC_mknod_params params { { pathname.characters_without_null_termination(), pathname.length() }, mode, dev, AT_FDCWD };
     int rc = syscall(SC_mknod, &params);
     HANDLE_SYSCALL_RETURN_VALUE("mknod", rc, {});
 #else
@@ -1777,7 +1784,7 @@ ErrorOr<String> resolve_executable_from_environment(StringView filename, int fla
 ErrorOr<ByteString> current_executable_path()
 {
     char path[4096] = {};
-#if defined(AK_OS_LINUX) || defined(AK_OS_ANDROID) || defined(AK_OS_SERENITY)
+#if defined(AK_OS_LINUX) || defined(AK_OS_SERENITY)
     auto ret = ::readlink("/proc/self/exe", path, sizeof(path) - 1);
     // Ignore error if it wasn't a symlink
     if (ret == -1 && errno != EINVAL)

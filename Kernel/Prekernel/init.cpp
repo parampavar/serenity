@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021, Gunnar Beutner <gbeutner@serenityos.org>
- * Copyright (c) 2021, Liav A. <liavalb@hotmail.co.il>
+ * Copyright (c) 2021-2024, Liav A. <liavalb@hotmail.co.il>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -10,14 +10,12 @@
 #include <Kernel/Boot/Multiboot.h>
 #include <Kernel/Memory/PhysicalAddress.h>
 #include <Kernel/Memory/VirtualAddress.h>
+#include <Kernel/Prekernel/DebugOutput.h>
 #include <Kernel/Prekernel/Prekernel.h>
+#include <Kernel/Prekernel/Random.h>
+#include <Kernel/Prekernel/Runtime.h>
 #include <LibELF/ELFABI.h>
 #include <LibELF/Relocation.h>
-
-#if ARCH(X86_64)
-#    include <Kernel/Arch/x86_64/ASM_wrapper.h>
-#    include <Kernel/Arch/x86_64/CPUID.h>
-#endif
 
 // Defined in the linker script
 extern uintptr_t __stack_chk_guard;
@@ -26,6 +24,9 @@ extern "C" [[noreturn]] void __stack_chk_fail();
 
 extern "C" u8 start_of_prekernel_image[];
 extern "C" u8 end_of_prekernel_image[];
+
+extern "C" u8 _binary_Kernel_standalone_start[];
+extern "C" u8 end_of_prekernel_image_after_kernel_image[];
 
 extern "C" u8 gdt64ptr[];
 extern "C" u16 code64_sel;
@@ -45,18 +46,7 @@ extern "C" {
 multiboot_info_t* multiboot_info_ptr;
 }
 
-[[noreturn]] static void halt()
-{
-    asm volatile("hlt");
-    __builtin_unreachable();
-}
-
 void __stack_chk_fail()
-{
-    halt();
-}
-
-void __assertion_failed(char const*, char const*, unsigned int, char const*)
 {
     halt();
 }
@@ -71,8 +61,6 @@ extern "C" [[noreturn]] void init();
 //
 // This is where C++ execution begins, after boot.S transfers control here.
 //
-
-u64 generate_secure_seed();
 
 static void memmove_virt(void* dest_virt, FlatPtr dest_phys, void* src, size_t n)
 {
@@ -92,21 +80,27 @@ static void memmove_virt(void* dest_virt, FlatPtr dest_phys, void* src, size_t n
 
 extern "C" [[noreturn]] void init()
 {
-    if (multiboot_info_ptr->mods_count < 1)
-        halt();
+    u32 initrd_module_start = 0;
+    u32 initrd_module_end = 0;
+    if (multiboot_info_ptr->mods_count > 0) {
+        // We only consider the first specified multiboot module, and ignore
+        // the rest of the modules.
+        multiboot_module_entry_t* initrd_module = (multiboot_module_entry_t*)(FlatPtr)multiboot_info_ptr->mods_addr;
+        VERIFY(initrd_module->start < initrd_module->end);
 
-    multiboot_module_entry_t* kernel_module = (multiboot_module_entry_t*)(FlatPtr)multiboot_info_ptr->mods_addr;
+        initrd_module_start = initrd_module->start;
+        initrd_module_end = initrd_module->end;
+    }
 
-    u8* kernel_image = (u8*)(FlatPtr)kernel_module->start;
+    u8* kernel_image = _binary_Kernel_standalone_start;
     // copy the ELF header and program headers because we might end up overwriting them
     Elf_Ehdr kernel_elf_header = *(Elf_Ehdr*)kernel_image;
     Elf_Phdr kernel_program_headers[16];
-    if (kernel_elf_header.e_phnum > array_size(kernel_program_headers))
-        halt();
+    VERIFY(kernel_elf_header.e_phnum < array_size(kernel_program_headers));
     __builtin_memcpy(kernel_program_headers, kernel_image + kernel_elf_header.e_phoff, sizeof(Elf_Phdr) * kernel_elf_header.e_phnum);
 
-    FlatPtr kernel_physical_base = 0x200000;
-    FlatPtr default_kernel_load_base = KERNEL_MAPPING_BASE + 0x200000;
+    FlatPtr kernel_physical_base = (FlatPtr)0x200000;
+    FlatPtr default_kernel_load_base = KERNEL_MAPPING_BASE + kernel_physical_base;
 
     FlatPtr kernel_load_base = default_kernel_load_base;
 
@@ -130,10 +124,8 @@ extern "C" [[noreturn]] void init()
             continue;
         auto start = kernel_load_base + kernel_program_header.p_vaddr;
         auto end = start + kernel_program_header.p_memsz;
-        if (start < (FlatPtr)end_of_prekernel_image)
-            halt();
-        if (kernel_physical_base + kernel_program_header.p_paddr < (FlatPtr)end_of_prekernel_image)
-            halt();
+        VERIFY(start > (FlatPtr)end_of_prekernel_image);
+        VERIFY(kernel_physical_base + kernel_program_header.p_paddr > (FlatPtr)end_of_prekernel_image);
         if (end > kernel_load_end)
             kernel_load_end = end;
     }
@@ -142,7 +134,7 @@ extern "C" [[noreturn]] void init()
     FlatPtr kernel_mapping_base = kernel_load_base & ~(FlatPtr)0x3fffffff;
 
     VERIFY(kernel_load_base % 0x1000 == 0);
-    VERIFY(kernel_load_base >= kernel_mapping_base + 0x200000);
+    VERIFY(kernel_load_base >= kernel_mapping_base + kernel_physical_base);
 
     int pdpt_flags = 0x3;
 
@@ -179,9 +171,6 @@ extern "C" [[noreturn]] void init()
     // overwriting mbi end as to avoid to check whether it's mapped after reloading page tables.
     BootInfo info {};
 
-    multiboot_info_ptr->mods_count--;
-    multiboot_info_ptr->mods_addr += sizeof(multiboot_module_entry_t);
-
     auto adjust_by_mapping_base = [kernel_mapping_base](auto ptr) {
         return (decltype(ptr))((FlatPtr)ptr + kernel_mapping_base);
     };
@@ -189,8 +178,12 @@ extern "C" [[noreturn]] void init()
     info.multiboot_flags = multiboot_info_ptr->flags;
     info.multiboot_memory_map = adjust_by_mapping_base((FlatPtr)multiboot_info_ptr->mmap_addr);
     info.multiboot_memory_map_count = multiboot_info_ptr->mmap_length / sizeof(multiboot_memory_map_t);
-    info.multiboot_modules = adjust_by_mapping_base((FlatPtr)multiboot_info_ptr->mods_addr);
-    info.multiboot_modules_count = multiboot_info_ptr->mods_count;
+
+    if (initrd_module_start != 0 && initrd_module_end != 0) {
+        info.multiboot_module_physical_ptr = initrd_module_start;
+        info.multiboot_module_length = initrd_module_end - initrd_module_start;
+    }
+
     if ((multiboot_info_ptr->flags & MULTIBOOT_INFO_FRAMEBUFFER_INFO) != 0) {
         info.multiboot_framebuffer_addr = multiboot_info_ptr->framebuffer_addr;
         info.multiboot_framebuffer_pitch = multiboot_info_ptr->framebuffer_pitch;
@@ -257,31 +250,6 @@ extern "C" [[noreturn]] void init()
     entry(*adjust_by_mapping_base(&info));
 
     __builtin_unreachable();
-}
-
-u64 generate_secure_seed()
-{
-    u32 seed = 0xFEEBDAED;
-
-#if ARCH(X86_64)
-    CPUID processor_info(0x1);
-    if (processor_info.edx() & (1 << 4)) // TSC
-        seed ^= read_tsc();
-
-    if (processor_info.ecx() & (1 << 30)) // RDRAND
-        seed ^= read_rdrand();
-
-    CPUID extended_features(0x7);
-    if (extended_features.ebx() & (1 << 18)) // RDSEED
-        seed ^= read_rdseed();
-#else
-#    warning No native randomness source available for this architecture
-#endif
-
-    seed ^= multiboot_info_ptr->mods_addr;
-    seed ^= multiboot_info_ptr->framebuffer_addr;
-
-    return seed;
 }
 
 // Define some Itanium C++ ABI methods to stop the linker from complaining.

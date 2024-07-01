@@ -20,6 +20,7 @@ set(AK_TEST_SOURCES
     TestCircularDeque.cpp
     TestCircularQueue.cpp
     TestComplex.cpp
+    TestCoroutine.cpp
     TestDisjointChunks.cpp
     TestDistinctNumeric.cpp
     TestDoublyLinkedList.cpp
@@ -34,6 +35,7 @@ set(AK_TEST_SOURCES
     TestFlyString.cpp
     TestFormat.cpp
     TestFuzzyMatch.cpp
+    TestGeneratorAK.cpp
     TestGenericLexer.cpp
     TestHashFunctions.cpp
     TestHashMap.cpp

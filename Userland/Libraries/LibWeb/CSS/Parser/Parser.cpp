@@ -40,6 +40,7 @@
 #include <LibWeb/CSS/StyleValues/AngleStyleValue.h>
 #include <LibWeb/CSS/StyleValues/BackgroundRepeatStyleValue.h>
 #include <LibWeb/CSS/StyleValues/BackgroundSizeStyleValue.h>
+#include <LibWeb/CSS/StyleValues/BasicShapeStyleValue.h>
 #include <LibWeb/CSS/StyleValues/BorderRadiusStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ColorStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ContentStyleValue.h>
@@ -1204,6 +1205,55 @@ RefPtr<StyleValue> Parser::parse_url_value(TokenStream<ComponentValue>& tokens)
     return URLStyleValue::create(*url);
 }
 
+RefPtr<StyleValue> Parser::parse_basic_shape_function(ComponentValue const& component_value)
+{
+    if (!component_value.is_function())
+        return nullptr;
+
+    auto function_name = component_value.function().name().bytes_as_string_view();
+
+    // FIXME: Implement other shapes. See: https://www.w3.org/TR/css-shapes-1/#basic-shape-functions
+    if (!function_name.equals_ignoring_ascii_case("polygon"sv))
+        return nullptr;
+
+    // polygon() = polygon( <'fill-rule'>? , [<length-percentage> <length-percentage>]# )
+    // FIXME: Parse the fill-rule.
+    auto arguments_tokens = TokenStream { component_value.function().values() };
+    auto arguments = parse_a_comma_separated_list_of_component_values(arguments_tokens);
+
+    Vector<Polygon::Point> points;
+    for (auto& argument : arguments) {
+        TokenStream argument_tokens { argument };
+
+        argument_tokens.skip_whitespace();
+        auto x_pos = parse_length_percentage(argument_tokens);
+        if (!x_pos.has_value())
+            return nullptr;
+
+        argument_tokens.skip_whitespace();
+        auto y_pos = parse_length_percentage(argument_tokens);
+        if (!y_pos.has_value())
+            return nullptr;
+
+        argument_tokens.skip_whitespace();
+        if (argument_tokens.has_next_token())
+            return nullptr;
+
+        points.append(Polygon::Point { *x_pos, *y_pos });
+    }
+
+    return BasicShapeStyleValue::create(Polygon { FillRule::Nonzero, move(points) });
+}
+
+RefPtr<StyleValue> Parser::parse_basic_shape_value(TokenStream<ComponentValue>& tokens)
+{
+    auto basic_shape = parse_basic_shape_function(tokens.peek_token());
+    if (!basic_shape)
+        return nullptr;
+    (void)tokens.next_token();
+    return basic_shape;
+}
+
 CSSRule* Parser::convert_to_rule(NonnullRefPtr<Rule> rule)
 {
     if (rule->is_at_rule()) {
@@ -1299,7 +1349,7 @@ CSSRule* Parser::convert_to_rule(NonnullRefPtr<Rule> rule)
 
             auto child_tokens = TokenStream { rule->block()->values() };
 
-            JS::MarkedVector<JS::NonnullGCPtr<CSSKeyframeRule>> keyframes(m_context.realm().heap());
+            JS::MarkedVector<CSSRule*> keyframes(m_context.realm().heap());
             while (child_tokens.has_next_token()) {
                 child_tokens.skip_whitespace();
                 // keyframe-selector = <keyframe-keyword> | <percentage>
@@ -1365,7 +1415,7 @@ CSSRule* Parser::convert_to_rule(NonnullRefPtr<Rule> rule)
                 }
             }
 
-            return CSSKeyframesRule::create(m_context.realm(), name, move(keyframes));
+            return CSSKeyframesRule::create(m_context.realm(), name, CSSRuleList::create(m_context.realm(), move(keyframes)));
         }
         if (rule->at_rule_name().equals_ignoring_ascii_case("namespace"sv)) {
             // https://drafts.csswg.org/css-namespaces/#syntax
@@ -2135,6 +2185,22 @@ Optional<Gfx::UnicodeRange> Parser::parse_unicode_range(StringView text)
     u32 end_value = maybe_end_value.release_value();
 
     return make_valid_unicode_range(start_value, end_value);
+}
+
+Vector<Gfx::UnicodeRange> Parser::parse_unicode_ranges(TokenStream<ComponentValue>& tokens)
+{
+    Vector<Gfx::UnicodeRange> unicode_ranges;
+    auto range_token_lists = parse_a_comma_separated_list_of_component_values(tokens);
+    for (auto& range_tokens : range_token_lists) {
+        TokenStream range_token_stream { range_tokens };
+        auto maybe_unicode_range = parse_unicode_range(range_token_stream);
+        if (!maybe_unicode_range.has_value()) {
+            dbgln_if(CSS_PARSER_DEBUG, "CSSParser: unicode-range format invalid; discarding.");
+            return {};
+        }
+        unicode_ranges.append(maybe_unicode_range.release_value());
+    }
+    return unicode_ranges;
 }
 
 RefPtr<StyleValue> Parser::parse_dimension_value(TokenStream<ComponentValue>& tokens)
@@ -4448,7 +4514,7 @@ CSSRule* Parser::parse_font_face_rule(TokenStream<ComponentValue>& tokens)
     auto declarations_and_at_rules = parse_a_list_of_declarations(tokens);
 
     Optional<FlyString> font_family;
-    Vector<FontFace::Source> src;
+    Vector<ParsedFontFace::Source> src;
     Vector<Gfx::UnicodeRange> unicode_range;
     Optional<int> weight;
     Optional<int> slope;
@@ -4520,28 +4586,15 @@ CSSRule* Parser::parse_font_face_rule(TokenStream<ComponentValue>& tokens)
         }
         if (declaration.name().equals_ignoring_ascii_case("src"sv)) {
             TokenStream token_stream { declaration.values() };
-            Vector<FontFace::Source> supported_sources = parse_font_face_src(token_stream);
+            Vector<ParsedFontFace::Source> supported_sources = parse_font_face_src(token_stream);
             if (!supported_sources.is_empty())
                 src = move(supported_sources);
             continue;
         }
         if (declaration.name().equals_ignoring_ascii_case("unicode-range"sv)) {
-            Vector<Gfx::UnicodeRange> unicode_ranges;
-            bool unicode_range_invalid = false;
-            TokenStream all_tokens { declaration.values() };
-            auto range_token_lists = parse_a_comma_separated_list_of_component_values(all_tokens);
-            for (auto& range_tokens : range_token_lists) {
-                TokenStream range_token_stream { range_tokens };
-                auto maybe_unicode_range = parse_unicode_range(range_token_stream);
-                if (!maybe_unicode_range.has_value()) {
-                    dbgln_if(CSS_PARSER_DEBUG, "CSSParser: @font-face unicode-range format invalid; discarding.");
-                    unicode_range_invalid = true;
-                    break;
-                }
-                unicode_ranges.append(maybe_unicode_range.release_value());
-            }
-
-            if (unicode_range_invalid || unicode_ranges.is_empty())
+            TokenStream token_stream { declaration.values() };
+            auto unicode_ranges = parse_unicode_ranges(token_stream);
+            if (unicode_ranges.is_empty())
                 continue;
 
             unicode_range = move(unicode_ranges);
@@ -4560,10 +4613,16 @@ CSSRule* Parser::parse_font_face_rule(TokenStream<ComponentValue>& tokens)
         unicode_range.empend(0x0u, 0x10FFFFu);
     }
 
-    return CSSFontFaceRule::create(m_context.realm(), FontFace { font_family.release_value(), weight, slope, move(src), move(unicode_range) });
+    return CSSFontFaceRule::create(m_context.realm(), ParsedFontFace { font_family.release_value(), weight, slope, move(src), move(unicode_range) });
 }
 
-Vector<FontFace::Source> Parser::parse_font_face_src(TokenStream<ComponentValue>& component_values)
+Vector<ParsedFontFace::Source> Parser::parse_as_font_face_src()
+{
+    return parse_font_face_src(m_token_stream);
+}
+
+template<typename T>
+Vector<ParsedFontFace::Source> Parser::parse_font_face_src(TokenStream<T>& component_values)
 {
     // FIXME: Get this information from the system somehow?
     // Format-name table: https://www.w3.org/TR/css-fonts-4/#font-format-definitions
@@ -4574,7 +4633,7 @@ Vector<FontFace::Source> Parser::parse_font_face_src(TokenStream<ComponentValue>
         return false;
     };
 
-    Vector<FontFace::Source> supported_sources;
+    Vector<ParsedFontFace::Source> supported_sources;
 
     auto list_of_source_token_lists = parse_a_comma_separated_list_of_component_values(component_values);
     for (auto const& source_token_list : list_of_source_token_lists) {
@@ -5006,102 +5065,169 @@ RefPtr<StyleValue> Parser::parse_easing_value(TokenStream<ComponentValue>& token
 
     auto const& part = tokens.next_token();
 
-    StringView name;
-    Optional<Vector<ComponentValue> const&> arguments;
     if (part.is(Token::Type::Ident)) {
-        name = part.token().ident();
-    } else if (part.is_function()) {
-        name = part.function().name();
-        arguments = part.function().values();
-    } else {
-        return nullptr;
-    }
+        auto name = part.token().ident();
+        auto maybe_simple_easing = [&] -> RefPtr<EasingStyleValue> {
+            if (name == "linear"sv)
+                return EasingStyleValue::create(EasingStyleValue::Linear {});
+            if (name == "ease"sv)
+                return EasingStyleValue::create(EasingStyleValue::CubicBezier::ease());
+            if (name == "ease-in"sv)
+                return EasingStyleValue::create(EasingStyleValue::CubicBezier::ease_in());
+            if (name == "ease-out"sv)
+                return EasingStyleValue::create(EasingStyleValue::CubicBezier::ease_out());
+            if (name == "ease-in-out"sv)
+                return EasingStyleValue::create(EasingStyleValue::CubicBezier::ease_in_out());
+            if (name == "step-start"sv)
+                return EasingStyleValue::create(EasingStyleValue::Steps::step_start());
+            if (name == "step-end"sv)
+                return EasingStyleValue::create(EasingStyleValue::Steps::step_end());
+            return {};
+        }();
 
-    auto maybe_function = easing_function_from_string(name);
-    if (!maybe_function.has_value())
-        return nullptr;
-
-    auto function = maybe_function.release_value();
-    auto function_metadata = easing_function_metadata(function);
-
-    if (function_metadata.parameters.is_empty() && arguments.has_value()) {
-        dbgln_if(CSS_PARSER_DEBUG, "Too many arguments to {}. max: 0", name);
-        return nullptr;
-    }
-
-    StyleValueVector values;
-    size_t argument_index = 0;
-    if (arguments.has_value()) {
-        auto argument_tokens = TokenStream { *arguments };
-        auto arguments_values = parse_a_comma_separated_list_of_component_values(argument_tokens);
-        if (arguments_values.size() > function_metadata.parameters.size()) {
-            dbgln_if(CSS_PARSER_DEBUG, "Too many arguments to {}. max: {}", name, function_metadata.parameters.size());
+        if (!maybe_simple_easing)
             return nullptr;
-        }
-        for (auto& argument_values : arguments_values) {
-            // Prune any whitespace before and after the actual argument values.
-            argument_values.remove_all_matching([](auto& value) { return value.is(Token::Type::Whitespace); });
 
-            if (argument_values.size() != 1) {
-                dbgln_if(CSS_PARSER_DEBUG, "Too many values in argument to {}. max: 1", name);
+        transaction.commit();
+        return maybe_simple_easing;
+    }
+
+    if (!part.is_function())
+        return nullptr;
+
+    TokenStream argument_tokens { part.function().values() };
+    auto comma_separated_arguments = parse_a_comma_separated_list_of_component_values(argument_tokens);
+
+    // Remove whitespace
+    for (auto& argument : comma_separated_arguments)
+        argument.remove_all_matching([](auto& value) { return value.is(Token::Type::Whitespace); });
+
+    auto name = part.function().name();
+    if (name == "linear"sv) {
+        Vector<EasingStyleValue::Linear::Stop> stops;
+        for (auto const& argument : comma_separated_arguments) {
+            if (argument.is_empty() || argument.size() > 2)
+                return nullptr;
+
+            Optional<double> offset;
+            Optional<double> position;
+
+            for (auto const& part : argument) {
+                if (part.is(Token::Type::Number)) {
+                    if (offset.has_value())
+                        return nullptr;
+                    offset = part.token().number_value();
+                } else if (part.is(Token::Type::Percentage)) {
+                    if (position.has_value())
+                        return nullptr;
+                    position = part.token().percentage();
+                } else {
+                    return nullptr;
+                };
+            }
+
+            if (!offset.has_value())
+                return nullptr;
+
+            stops.append({ offset.value(), move(position) });
+        }
+
+        if (stops.is_empty())
+            return nullptr;
+
+        transaction.commit();
+        return EasingStyleValue::create(EasingStyleValue::Linear { move(stops) });
+    }
+
+    if (name == "cubic-bezier") {
+        if (comma_separated_arguments.size() != 4)
+            return nullptr;
+
+        for (auto const& argument : comma_separated_arguments) {
+            if (argument.size() != 1)
+                return nullptr;
+            if (!argument[0].is(Token::Type::Number))
+                return nullptr;
+        }
+
+        EasingStyleValue::CubicBezier bezier {
+            comma_separated_arguments[0][0].token().number_value(),
+            comma_separated_arguments[1][0].token().number_value(),
+            comma_separated_arguments[2][0].token().number_value(),
+            comma_separated_arguments[3][0].token().number_value(),
+        };
+
+        if (bezier.x1 < 0.0 || bezier.x1 > 1.0 || bezier.x2 < 0.0 || bezier.x2 > 1.0)
+            return nullptr;
+
+        transaction.commit();
+        return EasingStyleValue::create(bezier);
+    }
+
+    if (name == "steps") {
+        if (comma_separated_arguments.is_empty() || comma_separated_arguments.size() > 2)
+            return nullptr;
+
+        for (auto const& argument : comma_separated_arguments) {
+            if (argument.size() != 1)
+                return nullptr;
+        }
+
+        EasingStyleValue::Steps steps;
+
+        auto intervals_argument = comma_separated_arguments[0][0];
+        if (!intervals_argument.is(Token::Type::Number))
+            return nullptr;
+        if (!intervals_argument.token().number().is_integer())
+            return nullptr;
+        auto intervals = intervals_argument.token().to_integer();
+
+        if (comma_separated_arguments.size() == 2) {
+            TokenStream identifier_stream { comma_separated_arguments[1] };
+            auto ident = parse_identifier_value(identifier_stream);
+            if (!ident)
+                return nullptr;
+            switch (ident->to_identifier()) {
+            case ValueID::JumpStart:
+                steps.position = EasingStyleValue::Steps::Position::JumpStart;
+                break;
+            case ValueID::JumpEnd:
+                steps.position = EasingStyleValue::Steps::Position::JumpEnd;
+                break;
+            case ValueID::JumpBoth:
+                steps.position = EasingStyleValue::Steps::Position::JumpBoth;
+                break;
+            case ValueID::JumpNone:
+                steps.position = EasingStyleValue::Steps::Position::JumpNone;
+                break;
+            case ValueID::Start:
+                steps.position = EasingStyleValue::Steps::Position::Start;
+                break;
+            case ValueID::End:
+                steps.position = EasingStyleValue::Steps::Position::End;
+                break;
+            default:
                 return nullptr;
             }
-
-            auto& value = argument_values[0];
-            auto value_as_stream = TokenStream { argument_values };
-            switch (function_metadata.parameters[argument_index].type) {
-            case EasingFunctionParameterType::Number: {
-                if (value.is(Token::Type::Number))
-                    values.append(NumberStyleValue::create(value.token().number().value()));
-                else
-                    return nullptr;
-                break;
-            }
-            case EasingFunctionParameterType::NumberZeroToOne: {
-                if (value.is(Token::Type::Number) && value.token().number_value() >= 0 && value.token().number_value() <= 1)
-                    values.append(NumberStyleValue::create(value.token().number().value()));
-                else
-                    return nullptr;
-                break;
-            }
-            case EasingFunctionParameterType::Integer: {
-                if (value.is(Token::Type::Number) && value.token().number().is_integer())
-                    values.append(IntegerStyleValue::create(value.token().number().integer_value()));
-                else
-                    return nullptr;
-                break;
-            }
-            case EasingFunctionParameterType::StepPosition: {
-                if (!value.is(Token::Type::Ident))
-                    return nullptr;
-                auto ident = parse_identifier_value(value_as_stream);
-                if (!ident)
-                    return nullptr;
-                switch (ident->to_identifier()) {
-                case ValueID::JumpStart:
-                case ValueID::JumpEnd:
-                case ValueID::JumpNone:
-                case ValueID::Start:
-                case ValueID::End:
-                    values.append(*ident);
-                    break;
-                default:
-                    return nullptr;
-                }
-            }
-            }
-
-            ++argument_index;
         }
+
+        // Perform extra validation
+        // https://drafts.csswg.org/css-easing/#funcdef-step-easing-function-steps
+        // The first parameter specifies the number of intervals in the function. It must be a positive integer greater than 0
+        // unless the second parameter is jump-none in which case it must be a positive integer greater than 1.
+        if (steps.position == EasingStyleValue::Steps::Position::JumpNone) {
+            if (intervals < 1)
+                return nullptr;
+        } else if (intervals < 0) {
+            return nullptr;
+        }
+
+        steps.number_of_intervals = intervals;
+        transaction.commit();
+        return EasingStyleValue::create(steps);
     }
 
-    if (argument_index < function_metadata.parameters.size() && !function_metadata.parameters[argument_index].is_optional) {
-        dbgln_if(CSS_PARSER_DEBUG, "Required parameter at position {} is missing", argument_index);
-        return nullptr;
-    }
-
-    transaction.commit();
-    return EasingStyleValue::create(function, move(values));
+    return nullptr;
 }
 
 // https://www.w3.org/TR/css-transforms-1/#transform-property
@@ -5424,7 +5550,7 @@ RefPtr<StyleValue> Parser::parse_transition_value(TokenStream<ComponentValue>& t
             transition.property_name = CustomIdentStyleValue::create("all"_fly_string);
 
         if (!transition.easing)
-            transition.easing = EasingStyleValue::create(EasingFunction::Ease, {});
+            transition.easing = EasingStyleValue::create(EasingStyleValue::CubicBezier::ease());
 
         transitions.append(move(transition));
 
@@ -6526,6 +6652,11 @@ Optional<Parser::PropertyAndValue> Parser::parse_css_value_for_properties(Readon
     if (auto property = any_property_accepts_type(property_ids, ValueType::BackgroundPosition); property.has_value()) {
         if (auto maybe_position = parse_position_value(tokens, PositionParsingMode::BackgroundPosition))
             return PropertyAndValue { *property, maybe_position };
+    }
+
+    if (auto property = any_property_accepts_type(property_ids, ValueType::BasicShape); property.has_value()) {
+        if (auto maybe_basic_shape = parse_basic_shape_value(tokens))
+            return PropertyAndValue { *property, maybe_basic_shape };
     }
 
     if (auto property = any_property_accepts_type(property_ids, ValueType::Ratio); property.has_value()) {

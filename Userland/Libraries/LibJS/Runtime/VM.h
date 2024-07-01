@@ -42,7 +42,7 @@ public:
     struct CustomData {
         virtual ~CustomData() = default;
 
-        virtual void spin_event_loop_until(NOESCAPE JS::SafeFunction<bool()> goal_condition) = 0;
+        virtual void spin_event_loop_until(JS::SafeFunction<bool()> goal_condition) = 0;
     };
 
     static ErrorOr<NonnullRefPtr<VM>> create(OwnPtr<CustomData> = {});
@@ -96,9 +96,12 @@ public:
 
     bool did_reach_stack_space_limit() const
     {
-        // Address sanitizer (ASAN) used to check for more space but
-        // currently we can't detect the stack size with it enabled.
+#if defined(AK_OS_MACOS) && defined(HAS_ADDRESS_SANITIZER)
+        // We hit stack limits sooner on macOS 14 arm64 with ASAN enabled.
+        return m_stack_info.size_free() < 96 * KiB;
+#else
         return m_stack_info.size_free() < 32 * KiB;
+#endif
     }
 
     // TODO: Rename this function instead of providing a second argument, now that the global object is no longer passed in.
@@ -220,13 +223,9 @@ public:
     Function<void()> on_call_stack_emptied;
     Function<void(Promise&)> on_promise_unhandled_rejection;
     Function<void(Promise&)> on_promise_rejection_handled;
+    Function<void(Object const&, PropertyKey const&)> on_unimplemented_property_access;
 
     CustomData* custom_data() { return m_custom_data; }
-
-    ThrowCompletionOr<void> binding_initialization(DeprecatedFlyString const& target, Value value, Environment* environment);
-    ThrowCompletionOr<void> binding_initialization(NonnullRefPtr<BindingPattern const> const& target, Value value, Environment* environment);
-
-    ThrowCompletionOr<Value> named_evaluation_if_anonymous_function(ASTNode const& expression, DeprecatedFlyString const& name);
 
     void save_execution_context_stack();
     void clear_execution_context_stack();
@@ -260,10 +259,6 @@ public:
     Function<ThrowCompletionOr<void>(Object&)> host_ensure_can_add_private_element;
     Function<ThrowCompletionOr<HandledByHost>(ArrayBuffer&, size_t)> host_resize_array_buffer;
 
-    // Execute a specific AST node either in AST or BC interpreter, depending on which one is enabled by default.
-    // NOTE: This is meant as a temporary stopgap until everything is bytecode.
-    ThrowCompletionOr<Value> execute_ast_node(ASTNode const&);
-
     Vector<StackTraceElement> stack_trace() const;
 
 private:
@@ -277,9 +272,6 @@ private:
     };
 
     VM(OwnPtr<CustomData>, ErrorMessages);
-
-    ThrowCompletionOr<void> property_binding_initialization(BindingPattern const& binding, Value value, Environment* environment);
-    ThrowCompletionOr<void> iterator_binding_initialization(BindingPattern const& binding, IteratorRecord& iterator_record, Environment* environment);
 
     void load_imported_module(ImportedModuleReferrer, ModuleRequest const&, GCPtr<GraphLoadingState::HostDefined>, ImportedModulePayload);
     ThrowCompletionOr<void> link_and_eval_module(CyclicModule&);

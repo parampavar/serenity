@@ -134,6 +134,7 @@ class Configuration:
     nvme_enable: bool = True
     sd_enable: bool = False
     usb_boot_enable: bool = False
+    virtio_block_enable: bool = False
     screen_count: int = 1
     host_ip: str = "127.0.0.1"
     ethernet_device_type: str = "e1000"
@@ -429,10 +430,6 @@ def set_up_basic_kernel_cmdline(config: Configuration):
         # Split environment variable at spaces, since we don't pass arguments like shell scripts do.
         config.kernel_cmdline.extend(provided_cmdline.split(sep=None))
 
-    # Handle system-specific arguments now, boot type specific arguments are handled later.
-    if config.qemu_kind == QEMUKind.NativeWindows:
-        config.kernel_cmdline.append("disable_virtio")
-
 
 def set_up_disk_image_path(config: Configuration):
     provided_disk_image = environ.get("SERENITY_DISK_IMAGE")
@@ -617,12 +614,15 @@ def set_up_boot_drive(config: Configuration):
     provided_nvme_enable = environ.get("SERENITY_NVME_ENABLE")
     if provided_nvme_enable is not None:
         config.nvme_enable = provided_nvme_enable == "1"
-    provided_usb_boot_enable = environ.get("SERENITY_USE_SDCARD")
-    if provided_usb_boot_enable is not None:
-        config.sd_enable = provided_usb_boot_enable == "1"
+    provided_sdcard_enable = environ.get("SERENITY_USE_SDCARD")
+    if provided_sdcard_enable is not None:
+        config.sd_enable = provided_sdcard_enable == "1"
     provided_usb_boot_enable = environ.get("SERENITY_USE_USBDRIVE")
     if provided_usb_boot_enable is not None:
         config.usb_boot_enable = provided_usb_boot_enable == "1"
+    provided_virtio_block_enable = environ.get("SERENITY_USE_VIRTIOBLOCK")
+    if provided_virtio_block_enable is not None:
+        config.virtio_block_enable = provided_virtio_block_enable == "1"
 
     if config.machine_type in [MachineType.MicroVM, MachineType.ISAPC]:
         if config.nvme_enable:
@@ -649,6 +649,10 @@ def set_up_boot_drive(config: Configuration):
         config.add_device("usb-storage,drive=usbstick")
         # FIXME: Find a better way to address the usb drive
         config.kernel_cmdline.append("root=block3:0")
+    elif config.virtio_block_enable:
+        config.boot_drive = f"if=none,id=virtio-root,format=raw,file={config.disk_image}"
+        config.add_device("virtio-blk-pci,drive=virtio-root")
+        config.kernel_cmdline.append("root=lun3:0:0")
     else:
         config.boot_drive = f"file={config.disk_image},format=raw,index=0,media=disk,id=disk"
 
@@ -692,7 +696,7 @@ def set_up_kernel(config: Configuration):
     elif config.architecture == Arch.RISCV64:
         config.kernel_and_initrd_arguments = ["-kernel", "Kernel/Kernel.bin"]
     elif config.architecture == Arch.x86_64:
-        config.kernel_and_initrd_arguments = ["-kernel", "Kernel/Prekernel/Prekernel", "-initrd", "Kernel/Kernel"]
+        config.kernel_and_initrd_arguments = ["-kernel", "Kernel/Kernel"]
 
 
 def set_up_machine_devices(config: Configuration):
@@ -725,6 +729,12 @@ def set_up_machine_devices(config: Configuration):
         config.extra_arguments.extend(["-serial", "stdio"])
         config.kernel_cmdline.extend(["serial_debug", "nvme_poll"])
         config.qemu_cpu = None
+        config.add_devices(
+            [
+                "virtio-keyboard",
+                "virtio-tablet",
+            ]
+        )
         return
 
     # Machine specific base setups

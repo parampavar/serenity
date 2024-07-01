@@ -141,9 +141,9 @@ void InlinePaintable::paint(PaintContext& context, PaintPhase phase) const
 
                 border_radii_data.inflate(outline_data->top.width + outline_offset_y, outline_data->right.width + outline_offset_x, outline_data->bottom.width + outline_offset_y, outline_data->left.width + outline_offset_x);
                 borders_rect.inflate(outline_data->top.width + outline_offset_y, outline_data->right.width + outline_offset_x, outline_data->bottom.width + outline_offset_y, outline_data->left.width + outline_offset_x);
-                context.recording_painter().paint_borders(context.rounded_device_rect(borders_rect), border_radii_data.as_corners(context), outline_data->to_device_pixels(context));
+                paint_all_borders(context.recording_painter(), context.rounded_device_rect(borders_rect), border_radii_data.as_corners(context), outline_data->to_device_pixels(context));
             } else {
-                context.recording_painter().paint_borders(context.rounded_device_rect(borders_rect), border_radii_data.as_corners(context), borders_data.to_device_pixels(context));
+                paint_all_borders(context.recording_painter(), context.rounded_device_rect(borders_rect), border_radii_data.as_corners(context), borders_data.to_device_pixels(context));
             }
 
             return IterationDecision::Continue;
@@ -211,12 +211,13 @@ TraversalDecision InlinePaintable::hit_test(CSSPixelPoint position, HitTestType 
 
     bool should_exit = false;
     for_each_child([&](Paintable const& child) {
-        if (should_exit)
-            return;
         if (child.stacking_context())
-            return;
-        if (child.hit_test(position, type, callback) == TraversalDecision::Break)
+            return IterationDecision::Continue;
+        if (child.hit_test(position, type, callback) == TraversalDecision::Break) {
             should_exit = true;
+            return IterationDecision::Break;
+        }
+        return IterationDecision::Continue;
     });
 
     if (should_exit)

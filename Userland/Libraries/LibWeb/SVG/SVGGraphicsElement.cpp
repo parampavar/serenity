@@ -83,7 +83,7 @@ JS::GCPtr<SVG::SVGMaskElement const> SVGGraphicsElement::mask() const
 JS::GCPtr<SVG::SVGClipPathElement const> SVGGraphicsElement::clip_path() const
 {
     auto const& clip_path_reference = layout_node()->computed_values().clip_path();
-    if (!clip_path_reference.has_value())
+    if (!clip_path_reference.has_value() || !clip_path_reference->is_url())
         return {};
     return try_resolve_url_to<SVG::SVGClipPathElement const>(clip_path_reference->url());
 }
@@ -158,6 +158,7 @@ void SVGGraphicsElement::apply_presentational_hints(CSS::StyleProperties& style)
         NamedPropertyID(CSS::PropertyID::Mask),
         NamedPropertyID(CSS::PropertyID::MaskType),
         NamedPropertyID(CSS::PropertyID::ClipPath),
+        NamedPropertyID(CSS::PropertyID::ClipRule),
     };
 
     CSS::Parser::ParsingContext parsing_context { document(), CSS::Parser::ParsingContext::Mode::SVGPresentationAttribute };
@@ -172,11 +173,9 @@ void SVGGraphicsElement::apply_presentational_hints(CSS::StyleProperties& style)
     });
 }
 
-Optional<FillRule> SVGGraphicsElement::fill_rule() const
+static FillRule to_svg_fill_rule(CSS::FillRule fill_rule)
 {
-    if (!layout_node())
-        return {};
-    switch (layout_node()->computed_values().fill_rule()) {
+    switch (fill_rule) {
     case CSS::FillRule::Nonzero:
         return FillRule::Nonzero;
     case CSS::FillRule::Evenodd:
@@ -184,6 +183,20 @@ Optional<FillRule> SVGGraphicsElement::fill_rule() const
     default:
         VERIFY_NOT_REACHED();
     }
+}
+
+Optional<FillRule> SVGGraphicsElement::fill_rule() const
+{
+    if (!layout_node())
+        return {};
+    return to_svg_fill_rule(layout_node()->computed_values().fill_rule());
+}
+
+Optional<ClipRule> SVGGraphicsElement::clip_rule() const
+{
+    if (!layout_node())
+        return {};
+    return to_svg_fill_rule(layout_node()->computed_values().clip_rule());
 }
 
 Optional<Gfx::Color> SVGGraphicsElement::fill_color() const
@@ -238,7 +251,7 @@ Optional<float> SVGGraphicsElement::stroke_width() const
     CSSPixels viewport_width = 0;
     CSSPixels viewport_height = 0;
     if (auto* svg_svg_element = shadow_including_first_ancestor_of_type<SVGSVGElement>()) {
-        if (auto* svg_svg_layout_node = svg_svg_element->layout_node()) {
+        if (auto svg_svg_layout_node = svg_svg_element->layout_node()) {
             viewport_width = svg_svg_layout_node->computed_values().width().to_px(*svg_svg_layout_node, 0);
             viewport_height = svg_svg_layout_node->computed_values().height().to_px(*svg_svg_layout_node, 0);
         }

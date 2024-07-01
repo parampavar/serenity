@@ -16,6 +16,7 @@
 #include <LibWeb/DOM/EventTarget.h>
 #include <LibWeb/DOM/Slottable.h>
 #include <LibWeb/DOMParsing/XMLSerializer.h>
+#include <LibWeb/TraversalDecision.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
 namespace Web::DOM {
@@ -139,7 +140,7 @@ public:
 
     WebIDL::ExceptionOr<JS::NonnullGCPtr<Node>> replace_child(JS::NonnullGCPtr<Node> node, JS::NonnullGCPtr<Node> child);
 
-    JS::NonnullGCPtr<Node> clone_node(Document* document = nullptr, bool clone_children = false);
+    WebIDL::ExceptionOr<JS::NonnullGCPtr<Node>> clone_node(Document* document = nullptr, bool clone_children = false);
     WebIDL::ExceptionOr<JS::NonnullGCPtr<Node>> clone_node_binding(bool deep);
 
     // NOTE: This is intended for the JS bindings.
@@ -197,7 +198,7 @@ public:
     virtual void removed_from(Node*);
     virtual void children_changed() { }
     virtual void adopted_from(Document&) { }
-    virtual void cloned(Node&, bool) {};
+    virtual WebIDL::ExceptionOr<void> cloned(Node&, bool) { return {}; }
 
     Layout::Node const* layout_node() const { return m_layout_node; }
     Layout::Node* layout_node() { return m_layout_node; }
@@ -251,6 +252,8 @@ public:
 
     WebIDL::ExceptionOr<String> serialize_fragment(DOMParsing::RequireWellFormed, FragmentSerializationMode = FragmentSerializationMode::Inner) const;
 
+    WebIDL::ExceptionOr<void> unsafely_set_html(Element&, StringView);
+
     void replace_all(JS::GCPtr<Node>);
     void string_replace_all(String const&);
 
@@ -274,11 +277,11 @@ public:
 
     // https://dom.spec.whatwg.org/#concept-shadow-including-inclusive-descendant
     template<typename Callback>
-    IterationDecision for_each_shadow_including_inclusive_descendant(Callback);
+    TraversalDecision for_each_shadow_including_inclusive_descendant(Callback);
 
     // https://dom.spec.whatwg.org/#concept-shadow-including-descendant
     template<typename Callback>
-    IterationDecision for_each_shadow_including_descendant(Callback);
+    TraversalDecision for_each_shadow_including_descendant(Callback);
 
     Slottable as_slottable();
 
@@ -460,116 +463,120 @@ public:
     }
 
     template<typename Callback>
-    IterationDecision for_each_in_inclusive_subtree(Callback callback) const
+    TraversalDecision for_each_in_inclusive_subtree(Callback callback) const
     {
-        if (callback(static_cast<Node const&>(*this)) == IterationDecision::Break)
-            return IterationDecision::Break;
+        if (auto decision = callback(static_cast<Node const&>(*this)); decision != TraversalDecision::Continue)
+            return decision;
         for (auto* child = first_child(); child; child = child->next_sibling()) {
-            if (child->for_each_in_inclusive_subtree(callback) == IterationDecision::Break)
-                return IterationDecision::Break;
+            if (child->for_each_in_inclusive_subtree(callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
         }
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     }
 
     template<typename Callback>
-    IterationDecision for_each_in_inclusive_subtree(Callback callback)
+    TraversalDecision for_each_in_inclusive_subtree(Callback callback)
     {
-        if (callback(static_cast<Node&>(*this)) == IterationDecision::Break)
-            return IterationDecision::Break;
+        if (auto decision = callback(static_cast<Node&>(*this)); decision != TraversalDecision::Continue)
+            return decision;
         for (auto* child = first_child(); child; child = child->next_sibling()) {
-            if (child->for_each_in_inclusive_subtree(callback) == IterationDecision::Break)
-                return IterationDecision::Break;
+            if (child->for_each_in_inclusive_subtree(callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
         }
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     }
 
     template<typename U, typename Callback>
-    IterationDecision for_each_in_inclusive_subtree_of_type(Callback callback)
+    TraversalDecision for_each_in_inclusive_subtree_of_type(Callback callback)
     {
         if (is<U>(static_cast<Node&>(*this))) {
-            if (callback(static_cast<U&>(*this)) == IterationDecision::Break)
-                return IterationDecision::Break;
+            if (auto decision = callback(static_cast<U&>(*this)); decision != TraversalDecision::Continue)
+                return decision;
         }
         for (auto* child = first_child(); child; child = child->next_sibling()) {
-            if (child->template for_each_in_inclusive_subtree_of_type<U>(callback) == IterationDecision::Break)
-                return IterationDecision::Break;
+            if (child->template for_each_in_inclusive_subtree_of_type<U>(callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
         }
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     }
 
     template<typename U, typename Callback>
-    IterationDecision for_each_in_inclusive_subtree_of_type(Callback callback) const
+    TraversalDecision for_each_in_inclusive_subtree_of_type(Callback callback) const
     {
         if (is<U>(static_cast<Node const&>(*this))) {
-            if (callback(static_cast<U const&>(*this)) == IterationDecision::Break)
-                return IterationDecision::Break;
+            if (auto decision = callback(static_cast<U const&>(*this)); decision != TraversalDecision::Continue)
+                return decision;
         }
         for (auto* child = first_child(); child; child = child->next_sibling()) {
-            if (child->template for_each_in_inclusive_subtree_of_type<U>(callback) == IterationDecision::Break)
-                return IterationDecision::Break;
+            if (child->template for_each_in_inclusive_subtree_of_type<U>(callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
         }
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     }
 
     template<typename Callback>
-    IterationDecision for_each_in_subtree(Callback callback) const
+    TraversalDecision for_each_in_subtree(Callback callback) const
     {
         for (auto* child = first_child(); child; child = child->next_sibling()) {
-            if (child->for_each_in_inclusive_subtree(callback) == IterationDecision::Break)
-                return IterationDecision::Break;
+            if (child->for_each_in_inclusive_subtree(callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
         }
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     }
 
     template<typename Callback>
-    IterationDecision for_each_in_subtree(Callback callback)
+    TraversalDecision for_each_in_subtree(Callback callback)
     {
         for (auto* child = first_child(); child; child = child->next_sibling()) {
-            if (child->for_each_in_inclusive_subtree(callback) == IterationDecision::Break)
-                return IterationDecision::Break;
+            if (child->for_each_in_inclusive_subtree(callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
         }
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     }
 
     template<typename U, typename Callback>
-    IterationDecision for_each_in_subtree_of_type(Callback callback)
+    TraversalDecision for_each_in_subtree_of_type(Callback callback)
     {
         for (auto* child = first_child(); child; child = child->next_sibling()) {
-            if (child->template for_each_in_inclusive_subtree_of_type<U>(callback) == IterationDecision::Break)
-                return IterationDecision::Break;
+            if (child->template for_each_in_inclusive_subtree_of_type<U>(callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
         }
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     }
 
     template<typename U, typename Callback>
-    IterationDecision for_each_in_subtree_of_type(Callback callback) const
+    TraversalDecision for_each_in_subtree_of_type(Callback callback) const
     {
         for (auto* child = first_child(); child; child = child->next_sibling()) {
-            if (child->template for_each_in_inclusive_subtree_of_type<U>(callback) == IterationDecision::Break)
-                return IterationDecision::Break;
+            if (child->template for_each_in_inclusive_subtree_of_type<U>(callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
         }
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     }
 
     template<typename Callback>
     void for_each_child(Callback callback) const
     {
-        return const_cast<Node*>(this)->template for_each_child(move(callback));
+        return const_cast<Node*>(this)->for_each_child(move(callback));
     }
 
     template<typename Callback>
     void for_each_child(Callback callback)
     {
-        for (auto* node = first_child(); node; node = node->next_sibling())
-            callback(*node);
+        for (auto* node = first_child(); node; node = node->next_sibling()) {
+            if (callback(*node) == IterationDecision::Break)
+                return;
+        }
     }
 
     template<typename U, typename Callback>
     void for_each_child_of_type(Callback callback)
     {
         for (auto* node = first_child(); node; node = node->next_sibling()) {
-            if (is<U>(node))
-                callback(verify_cast<U>(*node));
+            if (is<U>(node)) {
+                if (callback(verify_cast<U>(*node)) == IterationDecision::Break)
+                    return;
+            }
         }
     }
 

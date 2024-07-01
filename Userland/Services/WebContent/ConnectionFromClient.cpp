@@ -62,6 +62,8 @@ ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<Core::LocalSocket> sock
     async_notify_process_information({ ::getpid() });
 }
 
+ConnectionFromClient::~ConnectionFromClient() = default;
+
 void ConnectionFromClient::die()
 {
     Web::Platform::EventLoopPlugin::the().quit();
@@ -443,7 +445,7 @@ void ConnectionFromClient::inspect_dom_node(u64 page_id, i32 node_id, Optional<W
         if (ctx.active_document() != nullptr) {
             ctx.active_document()->set_inspected_node(nullptr, {});
         }
-        return IterationDecision::Continue;
+        return Web::TraversalDecision::Continue;
     });
 
     Web::DOM::Node* node = Web::DOM::Node::from_unique_id(node_id);
@@ -713,7 +715,7 @@ void ConnectionFromClient::clone_dom_node(u64 page_id, i32 node_id)
         return;
     }
 
-    auto dom_node_clone = dom_node->clone_node(nullptr, true);
+    auto dom_node_clone = MUST(dom_node->clone_node(nullptr, true));
     dom_node->parent_node()->insert_before(dom_node_clone, dom_node->next_sibling());
 
     async_did_finish_editing_dom_node(page_id, dom_node_clone->unique_id());
@@ -825,6 +827,33 @@ void ConnectionFromClient::select_all(u64 page_id)
 {
     if (auto page = this->page(page_id); page.has_value())
         page->page().focused_navigable().select_all();
+}
+
+void ConnectionFromClient::find_in_page(u64 page_id, String const& query, CaseSensitivity case_sensitivity)
+{
+    auto page = this->page(page_id);
+    if (!page.has_value())
+        return;
+
+    page->page().find_in_page(query, case_sensitivity);
+}
+
+void ConnectionFromClient::find_in_page_next_match(u64 page_id)
+{
+    auto page = this->page(page_id);
+    if (!page.has_value())
+        return;
+
+    page->page().find_in_page_next_match();
+}
+
+void ConnectionFromClient::find_in_page_previous_match(u64 page_id)
+{
+    auto page = this->page(page_id);
+    if (!page.has_value())
+        return;
+
+    page->page().find_in_page_previous_match();
 }
 
 void ConnectionFromClient::paste(u64 page_id, String const& text)

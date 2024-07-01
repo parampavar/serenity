@@ -3,7 +3,6 @@
 #import <DOM/Attr.idl>
 #import <DOM/ChildNode.idl>
 #import <DOM/DOMTokenList.idl>
-#import <DOM/InnerHTML.idl>
 #import <DOM/NamedNodeMap.idl>
 #import <DOM/Node.idl>
 #import <DOM/NodeList.idl>
@@ -54,14 +53,14 @@ interface Element : Node {
     [CEReactions] Attr removeAttributeNode(Attr attr);
 
     ShadowRoot attachShadow(ShadowRootInit init);
-    readonly attribute ShadowRoot? shadowRoot;
+    [ImplementedAs=shadow_root_for_bindings] readonly attribute ShadowRoot? shadowRoot;
 
     boolean matches(DOMString selectors);
     Element? closest(DOMString selectors);
     [ImplementedAs=matches] boolean webkitMatchesSelector(DOMString selectors); // legacy alias of .matches
 
-    HTMLCollection getElementsByTagName(DOMString tagName);
-    HTMLCollection getElementsByTagNameNS(DOMString? namespace, DOMString localName);
+    HTMLCollection getElementsByTagName([FlyString] DOMString tagName);
+    HTMLCollection getElementsByTagNameNS([FlyString] DOMString? namespace, [FlyString] DOMString localName);
     HTMLCollection getElementsByClassName(DOMString className);
 
     [CEReactions] Element? insertAdjacentElement(DOMString where, Element element); // legacy
@@ -75,7 +74,7 @@ interface Element : Node {
     DOMRectList getClientRects();
     DOMRect getBoundingClientRect();
 
-    // FIXME: boolean checkVisibility(optional CheckVisibilityOptions options = {});
+    [FIXME] boolean checkVisibility(optional CheckVisibilityOptions options = {});
 
     undefined scrollIntoView(optional (boolean or ScrollIntoViewOptions) arg = {});
     undefined scroll(optional ScrollToOptions options = {});
@@ -94,21 +93,37 @@ interface Element : Node {
     readonly attribute long clientHeight;
     readonly attribute double currentCSSZoom;
 
-    // https://w3c.github.io/DOM-Parsing/#extensions-to-the-element-interface
+    // https://html.spec.whatwg.org/#dom-parsing-and-serialization
+    // FIXME: [CEReactions] undefined setHTMLUnsafe((TrustedHTML or DOMString) html);
+    [CEReactions] undefined setHTMLUnsafe(DOMString html);
+    DOMString getHTML(optional GetHTMLOptions options = {});
+
+    // FIXME: [CEReactions] attribute (TrustedHTML or [LegacyNullToEmptyString] DOMString) innerHTML;
+    [CEReactions, LegacyNullToEmptyString] attribute DOMString innerHTML;
+
+    // FIXME: [CEReactions] attribute (TrustedHTML or [LegacyNullToEmptyString] DOMString) outerHTML;
     [CEReactions, LegacyNullToEmptyString] attribute DOMString outerHTML;
+
+    // FIXME: [CEReactions] undefined insertAdjacentHTML(DOMString position, (TrustedHTML or DOMString) string);
     [CEReactions] undefined insertAdjacentHTML(DOMString position, DOMString text);
 
+};
+
+dictionary GetHTMLOptions {
+    boolean serializableShadowRoots = false;
+    sequence<ShadowRoot> shadowRoots = [];
 };
 
 dictionary ShadowRootInit {
     required ShadowRootMode mode;
     boolean delegatesFocus = false;
     SlotAssignmentMode slotAssignment = "named";
+    boolean clonable = false;
+    boolean serializable = false;
 };
 
 Element includes ParentNode;
 Element includes ChildNode;
-Element includes InnerHTML;
 // https://www.w3.org/TR/wai-aria-1.2/#idl_element
 Element includes ARIAMixin;
 Element includes Slottable;

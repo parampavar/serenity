@@ -10,6 +10,7 @@
 #include <AK/Error.h>
 #include <AK/Forward.h>
 #include <AK/Optional.h>
+#include <AK/Time.h>
 #include <AK/Vector.h>
 #include <LibJS/Forward.h>
 #include <LibJS/Heap/Cell.h>
@@ -48,6 +49,9 @@ public:
 
         // https://fetch.spec.whatwg.org/#fetch-timing-info-decoded-body-size
         u64 decoded_size { 0 };
+
+        // https://fetch.spec.whatwg.org/#response-body-info-content-type
+        String content_type {};
 
         bool operator==(BodyInfo const&) const = default;
     };
@@ -114,6 +118,10 @@ public:
     [[nodiscard]] JS::NonnullGCPtr<Response> unsafe_response();
 
     [[nodiscard]] bool is_cors_cross_origin() const;
+
+    [[nodiscard]] bool is_fresh() const;
+    [[nodiscard]] bool is_stale_while_revalidate() const;
+    [[nodiscard]] bool is_stale() const;
 
     // Non-standard
     [[nodiscard]] Optional<StringView> network_error_message() const;
@@ -183,7 +191,14 @@ private:
     // A response has an associated has-cross-origin-redirects (a boolean), which is initially false.
     bool m_has_cross_origin_redirects { false };
 
+    // FIXME is the type correct?
+    u64 current_age() const;
+    u64 freshness_lifetime() const;
+    u64 stale_while_revalidate_lifetime() const;
+
     // Non-standard
+    UnixDateTime m_response_time;
+
     Optional<Variant<String, StringView>> m_network_error_message;
 };
 
@@ -223,7 +238,7 @@ private:
 
 // https://fetch.spec.whatwg.org/#concept-filtered-response-basic
 class BasicFilteredResponse final : public FilteredResponse {
-    JS_CELL(OpaqueRedirectFilteredResponse, FilteredResponse);
+    JS_CELL(BasicFilteredResponse, FilteredResponse);
     JS_DECLARE_ALLOCATOR(BasicFilteredResponse);
 
 public:

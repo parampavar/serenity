@@ -22,8 +22,8 @@ dictionary OscillatorOptions : AudioNodeOptions {
 [Exposed=Window]
 interface OscillatorNode : AudioScheduledSourceNode {
     constructor(BaseAudioContext context, optional OscillatorOptions options = {});
-    // FIXME: attribute OscillatorType type;
-    // FIXME: readonly attribute AudioParam frequency;
-    // FIXME: readonly attribute AudioParam detune;
-    // FIXME: undefined setPeriodicWave(PeriodicWave periodicWave);
+    attribute OscillatorType type;
+    readonly attribute AudioParam frequency;
+    [FIXME] readonly attribute AudioParam detune;
+    [FIXME] undefined setPeriodicWave(PeriodicWave periodicWave);
 };

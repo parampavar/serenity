@@ -7,6 +7,7 @@
 
 #include <LibWeb/ARIA/Roles.h>
 #include <LibWeb/Bindings/HTMLAnchorElementPrototype.h>
+#include <LibWeb/DOM/DOMTokenList.h>
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/HTML/AttributeNames.h>
 #include <LibWeb/HTML/HTMLAnchorElement.h>
@@ -33,11 +34,20 @@ void HTMLAnchorElement::initialize(JS::Realm& realm)
     WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLAnchorElement);
 }
 
+void HTMLAnchorElement::visit_edges(Cell::Visitor& visitor)
+{
+    Base::visit_edges(visitor);
+    visitor.visit(m_rel_list);
+}
+
 void HTMLAnchorElement::attribute_changed(FlyString const& name, Optional<String> const& value)
 {
     HTMLElement::attribute_changed(name, value);
     if (name == HTML::AttributeNames::href) {
         set_the_url();
+    } else if (name == HTML::AttributeNames::rel) {
+        if (m_rel_list)
+            m_rel_list->associated_attribute_changed(value.value_or(String {}));
     }
 }
 
@@ -49,6 +59,11 @@ Optional<String> HTMLAnchorElement::hyperlink_element_utils_href() const
 WebIDL::ExceptionOr<void> HTMLAnchorElement::set_hyperlink_element_utils_href(String href)
 {
     return set_attribute(HTML::AttributeNames::href, move(href));
+}
+
+Optional<String> HTMLAnchorElement::hyperlink_element_utils_referrerpolicy() const
+{
+    return attribute(HTML::AttributeNames::referrerpolicy);
 }
 
 bool HTMLAnchorElement::has_activation_behavior() const
@@ -123,6 +138,15 @@ Optional<ARIA::Role> HTMLAnchorElement::default_role() const
     return ARIA::Role::generic;
 }
 
+// https://html.spec.whatwg.org/multipage/text-level-semantics.html#dom-a-rellist
+JS::NonnullGCPtr<DOM::DOMTokenList> HTMLAnchorElement::rel_list()
+{
+    // The IDL attribute relList must reflect the rel content attribute.
+    if (!m_rel_list)
+        m_rel_list = DOM::DOMTokenList::create(*this, HTML::AttributeNames::rel);
+    return *m_rel_list;
+}
+
 // https://html.spec.whatwg.org/multipage/text-level-semantics.html#dom-a-text
 String HTMLAnchorElement::text() const
 {
@@ -135,29 +159,6 @@ void HTMLAnchorElement::set_text(String const& text)
 {
     // The text attribute's setter must string replace all with the given value within this element.
     string_replace_all(text);
-}
-
-// https://html.spec.whatwg.org/multipage/text-level-semantics.html#dom-a-referrerpolicy
-StringView HTMLAnchorElement::referrer_policy() const
-{
-    // FIXME: This should probably be `Reflect` in the IDL.
-    // The IDL attribute referrerPolicy must reflect the referrerpolicy content attribute, limited to only known values.
-    auto maybe_policy_string = attribute(HTML::AttributeNames::referrerpolicy);
-    if (!maybe_policy_string.has_value())
-        return ""sv;
-
-    auto maybe_policy = ReferrerPolicy::from_string(maybe_policy_string.value());
-    if (!maybe_policy.has_value())
-        return ""sv;
-
-    return ReferrerPolicy::to_string(maybe_policy.value());
-}
-
-// https://html.spec.whatwg.org/multipage/text-level-semantics.html#dom-a-referrerpolicy
-WebIDL::ExceptionOr<void> HTMLAnchorElement::set_referrer_policy(String const& referrer_policy)
-{
-    // The IDL attribute referrerPolicy must reflect the referrerpolicy content attribute, limited to only known values.
-    return set_attribute(HTML::AttributeNames::referrerpolicy, referrer_policy);
 }
 
 }

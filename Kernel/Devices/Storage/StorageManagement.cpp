@@ -9,10 +9,6 @@
 #include <AK/Singleton.h>
 #include <AK/StringView.h>
 #include <AK/UUID.h>
-#if ARCH(X86_64)
-#    include <Kernel/Arch/x86_64/ISABus/IDEController.h>
-#    include <Kernel/Arch/x86_64/PCI/IDELegacyModeController.h>
-#endif
 #if ARCH(AARCH64)
 #    include <Kernel/Arch/aarch64/RPi/SDHostController.h>
 #endif
@@ -22,12 +18,12 @@
 #include <Kernel/Bus/PCI/Controller/VolumeManagementDevice.h>
 #include <Kernel/Devices/BlockDevice.h>
 #include <Kernel/Devices/DeviceManagement.h>
-#include <Kernel/Devices/Storage/ATA/AHCI/Controller.h>
-#include <Kernel/Devices/Storage/ATA/GenericIDE/Controller.h>
+#include <Kernel/Devices/Storage/AHCI/Controller.h>
 #include <Kernel/Devices/Storage/NVMe/NVMeController.h>
 #include <Kernel/Devices/Storage/SD/PCISDHostController.h>
 #include <Kernel/Devices/Storage/SD/SDHostController.h>
 #include <Kernel/Devices/Storage/StorageManagement.h>
+#include <Kernel/Devices/Storage/VirtIO/VirtIOBlockController.h>
 #include <Kernel/FileSystem/Ext2FS/FileSystem.h>
 #include <Kernel/FileSystem/VirtualFileSystem.h>
 #include <Kernel/Library/Panic.h>
@@ -42,7 +38,7 @@ static Atomic<u32> s_storage_device_minor_number;
 static Atomic<u32> s_partition_device_minor_number;
 static Atomic<u32> s_controller_id;
 
-static Atomic<u32> s_relative_ata_controller_id;
+static Atomic<u32> s_relative_ahci_controller_id;
 static Atomic<u32> s_relative_nvme_controller_id;
 static Atomic<u32> s_relative_sd_controller_id;
 
@@ -51,7 +47,7 @@ static constexpr StringView partition_uuid_prefix = "PARTUUID:"sv;
 static constexpr StringView partition_number_prefix = "part"sv;
 static constexpr StringView block_device_prefix = "block"sv;
 
-static constexpr StringView ata_device_prefix = "ata"sv;
+static constexpr StringView ahci_device_prefix = "ahci"sv;
 static constexpr StringView nvme_device_prefix = "nvme"sv;
 static constexpr StringView logical_unit_number_device_prefix = "lun"sv;
 static constexpr StringView sd_device_prefix = "sd"sv;
@@ -67,10 +63,10 @@ u32 StorageManagement::generate_relative_nvme_controller_id(Badge<NVMeController
     return controller_id;
 }
 
-u32 StorageManagement::generate_relative_ata_controller_id(Badge<ATAController>)
+u32 StorageManagement::generate_relative_ahci_controller_id(Badge<AHCIController>)
 {
-    auto controller_id = s_relative_ata_controller_id.load();
-    s_relative_ata_controller_id++;
+    auto controller_id = s_relative_ahci_controller_id.load();
+    s_relative_ahci_controller_id++;
     return controller_id;
 }
 
@@ -93,7 +89,7 @@ void StorageManagement::remove_device(StorageDevice& device)
     m_storage_devices.remove(device);
 }
 
-UNMAP_AFTER_INIT void StorageManagement::enumerate_pci_controllers(bool force_pio, bool nvme_poll)
+UNMAP_AFTER_INIT void StorageManagement::enumerate_pci_controllers(bool nvme_poll)
 {
     VERIFY(m_controllers.is_empty());
 
@@ -108,29 +104,12 @@ UNMAP_AFTER_INIT void StorageManagement::enumerate_pci_controllers(bool force_pi
             }
         }));
 
+        RefPtr<VirtIOBlockController> virtio_controller;
+
         auto const& handle_mass_storage_device = [&](PCI::DeviceIdentifier const& device_identifier) {
             using SubclassID = PCI::MassStorage::SubclassID;
 
             auto subclass_code = static_cast<SubclassID>(device_identifier.subclass_code().value());
-#if ARCH(X86_64)
-            if (subclass_code == SubclassID::IDEController && kernel_command_line().is_ide_enabled()) {
-                if (auto ide_controller_or_error = PCIIDELegacyModeController::initialize(device_identifier, force_pio); !ide_controller_or_error.is_error())
-                    m_controllers.append(ide_controller_or_error.release_value());
-                else
-                    dmesgln("Unable to initialize IDE controller: {}", ide_controller_or_error.error());
-            }
-#elif ARCH(AARCH64)
-            (void)force_pio;
-            TODO_AARCH64();
-#elif ARCH(RISCV64)
-            (void)force_pio;
-            if (subclass_code == SubclassID::IDEController && kernel_command_line().is_ide_enabled()) {
-                TODO_RISCV64();
-            }
-#else
-#    error Unknown architecture
-#endif
-
             if (subclass_code == SubclassID::SATAController
                 && device_identifier.prog_if() == PCI::MassStorage::SATAProgIF::AHCI) {
                 if (auto ahci_controller_or_error = AHCIController::initialize(device_identifier); !ahci_controller_or_error.is_error())
@@ -144,6 +123,16 @@ UNMAP_AFTER_INIT void StorageManagement::enumerate_pci_controllers(bool force_pi
                     dmesgln("Unable to initialize NVMe controller: {}", controller.error());
                 } else {
                     m_controllers.append(controller.release_value());
+                }
+            }
+            if (VirtIOBlockController::is_handled(device_identifier)) {
+                if (virtio_controller.is_null()) {
+                    auto controller = make_ref_counted<VirtIOBlockController>();
+                    m_controllers.append(controller);
+                    virtio_controller = controller;
+                }
+                if (auto res = virtio_controller->add_device(device_identifier); res.is_error()) {
+                    dmesgln("Unable to initialize VirtIO block device: {}", res.error());
                 }
             }
         };
@@ -189,16 +178,16 @@ UNMAP_AFTER_INIT void StorageManagement::enumerate_storage_devices()
 
 UNMAP_AFTER_INIT void StorageManagement::dump_storage_devices_and_partitions() const
 {
-    dbgln("StorageManagement: Detected {} storage devices", m_storage_devices.size_slow());
+    critical_dmesgln("StorageManagement: Detected {} storage devices", m_storage_devices.size_slow());
     for (auto const& storage_device : m_storage_devices) {
         auto const& partitions = storage_device.partitions();
         if (partitions.is_empty()) {
-            dbgln("  Device: block{}:{} (no partitions)", storage_device.major(), storage_device.minor());
+            critical_dmesgln("  Device: block{}:{} (no partitions)", storage_device.major(), storage_device.minor());
         } else {
-            dbgln("  Device: block{}:{} ({} partitions)", storage_device.major(), storage_device.minor(), partitions.size());
+            critical_dmesgln("  Device: block{}:{} ({} partitions)", storage_device.major(), storage_device.minor(), partitions.size());
             unsigned partition_number = 1;
             for (auto const& partition : partitions) {
-                dbgln("    Partition: {}, block{}:{} (UUID {})", partition_number, partition->major(), partition->minor(), partition->metadata().unique_guid().to_string());
+                critical_dmesgln("    Partition: {}, block{}:{} (UUID {})", partition_number, partition->major(), partition->minor(), partition->metadata().unique_guid().to_string());
                 partition_number++;
             }
         }
@@ -326,7 +315,7 @@ UNMAP_AFTER_INIT void StorageManagement::determine_hardware_relative_boot_device
 
 UNMAP_AFTER_INIT void StorageManagement::determine_ata_boot_device()
 {
-    determine_hardware_relative_boot_device(ata_device_prefix, [](StorageDevice const& device) -> bool {
+    determine_hardware_relative_boot_device(ahci_device_prefix, [](StorageDevice const& device) -> bool {
         return device.command_set() == StorageDevice::CommandSet::ATA;
     });
 }
@@ -400,7 +389,7 @@ UNMAP_AFTER_INIT bool StorageManagement::determine_boot_device(StringView boot_a
         return m_boot_block_device;
     }
 
-    if (m_boot_argument.starts_with(ata_device_prefix)) {
+    if (m_boot_argument.starts_with(ahci_device_prefix)) {
         determine_ata_boot_device();
         return m_boot_block_device;
     }
@@ -481,18 +470,11 @@ NonnullRefPtr<FileSystem> StorageManagement::root_filesystem() const
     return file_system;
 }
 
-UNMAP_AFTER_INIT void StorageManagement::initialize(bool force_pio, bool poll)
+UNMAP_AFTER_INIT void StorageManagement::initialize(bool poll)
 {
     VERIFY(s_storage_device_minor_number == 0);
-    if (PCI::Access::is_disabled()) {
-#if ARCH(X86_64)
-        // Note: If PCI is disabled, we assume that at least we have an ISA IDE controller
-        // to probe and use
-        auto isa_ide_controller = MUST(ISAIDEController::initialize());
-        m_controllers.append(isa_ide_controller);
-#endif
-    } else {
-        enumerate_pci_controllers(force_pio, poll);
+    if (!PCI::Access::is_disabled()) {
+        enumerate_pci_controllers(poll);
     }
 
 #if ARCH(AARCH64)

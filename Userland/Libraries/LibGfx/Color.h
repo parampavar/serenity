@@ -40,7 +40,7 @@ struct Oklab {
 
 class Color {
 public:
-    enum NamedColor {
+    enum class NamedColor {
         Transparent,
         Black,
         White,
@@ -65,6 +65,8 @@ public:
         MidMagenta,
         LightBlue,
     };
+
+    using enum NamedColor;
 
     constexpr Color() = default;
     constexpr Color(NamedColor);
@@ -316,7 +318,7 @@ public:
 
     constexpr u8 luminosity() const
     {
-        return (red() * 0.2126f + green() * 0.7152f + blue() * 0.0722f);
+        return round_to<u8>(red() * 0.2126f + green() * 0.7152f + blue() * 0.0722f);
     }
 
     constexpr float contrast_ratio(Color other)
@@ -620,6 +622,15 @@ constexpr Color::Color(NamedColor named)
 using Gfx::Color;
 
 namespace AK {
+
+template<>
+class Traits<Color> : public DefaultTraits<Color> {
+public:
+    static unsigned hash(Color const& color)
+    {
+        return int_hash(color.value());
+    }
+};
 
 template<>
 struct Formatter<Gfx::Color> : public Formatter<StringView> {

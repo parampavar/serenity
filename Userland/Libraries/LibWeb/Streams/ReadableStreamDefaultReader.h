@@ -32,7 +32,7 @@ public:
 };
 
 class ReadLoopReadRequest final : public ReadRequest {
-    JS_CELL(ReadLoopReadRequest, JS::Cell);
+    JS_CELL(ReadLoopReadRequest, ReadRequest);
     JS_DECLARE_ALLOCATOR(ReadLoopReadRequest);
 
 public:
@@ -79,6 +79,7 @@ public:
 
     JS::NonnullGCPtr<JS::Promise> read();
 
+    void read_a_chunk(Fetch::Infrastructure::IncrementalReadLoopReadRequest& read_request);
     void read_all_bytes(ReadLoopReadRequest::SuccessSteps, ReadLoopReadRequest::FailureSteps);
     void read_all_chunks(ReadLoopReadRequest::ChunkSteps, ReadLoopReadRequest::SuccessSteps, ReadLoopReadRequest::FailureSteps);
     JS::NonnullGCPtr<WebIDL::Promise> read_all_bytes_deprecated();

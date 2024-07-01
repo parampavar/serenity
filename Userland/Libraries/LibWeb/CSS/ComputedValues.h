@@ -21,11 +21,14 @@
 #include <LibWeb/CSS/Ratio.h>
 #include <LibWeb/CSS/Size.h>
 #include <LibWeb/CSS/StyleValues/AbstractImageStyleValue.h>
+#include <LibWeb/CSS/StyleValues/BasicShapeStyleValue.h>
 #include <LibWeb/CSS/StyleValues/PositionStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ShadowStyleValue.h>
 #include <LibWeb/CSS/Transformation.h>
 
 namespace Web::CSS {
+
+using ClipRule = FillRule;
 
 struct FlexBasisContent { };
 using FlexBasis = Variant<FlexBasisContent, Size>;
@@ -134,6 +137,7 @@ public:
     static float opacity() { return 1.0f; }
     static float fill_opacity() { return 1.0f; }
     static CSS::FillRule fill_rule() { return CSS::FillRule::Nonzero; }
+    static CSS::ClipRule clip_rule() { return CSS::ClipRule::Nonzero; }
     static float stroke_opacity() { return 1.0f; }
     static float stop_opacity() { return 1.0f; }
     static CSS::TextAnchor text_anchor() { return CSS::TextAnchor::Start; }
@@ -231,18 +235,31 @@ private:
 };
 
 // https://drafts.fxtf.org/css-masking/#the-clip-path
+// TODO: Support clip sources.
 class ClipPathReference {
 public:
-    // TODO: Support clip sources.
     ClipPathReference(URL::URL const& url)
-        : m_url(url)
+        : m_clip_source(url)
     {
     }
 
-    URL::URL const& url() const { return m_url; }
+    ClipPathReference(BasicShapeStyleValue const& basic_shape)
+        : m_clip_source(basic_shape)
+    {
+    }
+
+    bool is_basic_shape() const { return m_clip_source.has<BasicShape>(); }
+
+    bool is_url() const { return m_clip_source.has<URL::URL>(); }
+
+    URL::URL const& url() const { return m_clip_source.get<URL::URL>(); }
+
+    BasicShapeStyleValue const& basic_shape() const { return *m_clip_source.get<BasicShape>(); }
 
 private:
-    URL::URL m_url;
+    using BasicShape = NonnullRefPtr<BasicShapeStyleValue const>;
+
+    Variant<URL::URL, BasicShape> m_clip_source;
 };
 
 struct BackgroundLayerData {
@@ -430,6 +447,7 @@ public:
     Optional<MaskReference> const& mask() const { return m_noninherited.mask; }
     CSS::MaskType mask_type() const { return m_noninherited.mask_type; }
     Optional<ClipPathReference> const& clip_path() const { return m_noninherited.clip_path; }
+    CSS::ClipRule clip_rule() const { return m_inherited.clip_rule; }
 
     LengthPercentage const& cx() const { return m_noninherited.cx; }
     LengthPercentage const& cy() const { return m_noninherited.cy; }
@@ -505,6 +523,7 @@ protected:
         float stroke_opacity { InitialValues::stroke_opacity() };
         LengthPercentage stroke_width { Length::make_px(1) };
         CSS::TextAnchor text_anchor { InitialValues::text_anchor() };
+        CSS::ClipRule clip_rule { InitialValues::clip_rule() };
 
         Vector<ShadowData> text_shadow;
 
@@ -731,6 +750,7 @@ public:
     void set_mask(MaskReference value) { m_noninherited.mask = value; }
     void set_mask_type(CSS::MaskType value) { m_noninherited.mask_type = value; }
     void set_clip_path(ClipPathReference value) { m_noninherited.clip_path = value; }
+    void set_clip_rule(CSS::ClipRule value) { m_inherited.clip_rule = value; }
 
     void set_cx(LengthPercentage cx) { m_noninherited.cx = cx; }
     void set_cy(LengthPercentage cy) { m_noninherited.cy = cy; }

@@ -59,9 +59,16 @@ public:
     static void the_end(JS::NonnullGCPtr<DOM::Document>, JS::GCPtr<HTMLParser> = nullptr);
 
     DOM::Document& document();
-
-    static Vector<JS::Handle<DOM::Node>> parse_html_fragment(DOM::Element& context_element, StringView);
-    static String serialize_html_fragment(DOM::Node const& node, DOM::FragmentSerializationMode = DOM::FragmentSerializationMode::Inner);
+    enum class AllowDeclarativeShadowRoots {
+        No,
+        Yes,
+    };
+    static Vector<JS::Handle<DOM::Node>> parse_html_fragment(DOM::Element& context_element, StringView, AllowDeclarativeShadowRoots = AllowDeclarativeShadowRoots::No);
+    enum class SerializableShadowRoots {
+        No,
+        Yes,
+    };
+    static String serialize_html_fragment(DOM::Node const&, SerializableShadowRoots, Vector<JS::Handle<DOM::ShadowRoot>> const&, DOM::FragmentSerializationMode = DOM::FragmentSerializationMode::Inner);
 
     enum class InsertionMode {
 #define __ENUMERATE_INSERTION_MODE(mode) mode,
@@ -130,9 +137,15 @@ private:
 
     AdjustedInsertionLocation find_appropriate_place_for_inserting_node(JS::GCPtr<DOM::Element> override_target = nullptr);
 
+    void insert_an_element_at_the_adjusted_insertion_location(JS::NonnullGCPtr<DOM::Element>);
+
     DOM::Text* find_character_insertion_node();
     void flush_character_insertions();
-    JS::NonnullGCPtr<DOM::Element> insert_foreign_element(HTMLToken const&, Optional<FlyString> const& namespace_);
+    enum class OnlyAddToElementStack {
+        No,
+        Yes,
+    };
+    JS::NonnullGCPtr<DOM::Element> insert_foreign_element(HTMLToken const&, Optional<FlyString> const& namespace_, OnlyAddToElementStack);
     JS::NonnullGCPtr<DOM::Element> insert_html_element(HTMLToken const&);
     DOM::Element& current_node();
     DOM::Element& adjusted_current_node();

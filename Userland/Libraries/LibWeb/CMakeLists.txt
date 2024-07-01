@@ -9,7 +9,6 @@ set(SOURCES
     Animations/AnimationTimeline.cpp
     Animations/DocumentTimeline.cpp
     Animations/KeyframeEffect.cpp
-    Animations/TimingFunction.cpp
     ARIA/AriaData.cpp
     ARIA/ARIAMixin.cpp
     ARIA/Roles.cpp
@@ -54,8 +53,9 @@ set(SOURCES
     CSS/CSSTransition.cpp
     CSS/Display.cpp
     CSS/EdgeRect.cpp
-    CSS/Flex.cpp
     CSS/FontFace.cpp
+    CSS/FontFaceSet.cpp
+    CSS/Flex.cpp
     CSS/Frequency.cpp
     CSS/GridTrackPlacement.cpp
     CSS/GridTrackSize.cpp
@@ -79,6 +79,7 @@ set(SOURCES
     CSS/Parser/SelectorParsing.cpp
     CSS/Parser/Token.cpp
     CSS/Parser/Tokenizer.cpp
+    CSS/ParsedFontFace.cpp
     CSS/PercentageOr.cpp
     CSS/PreferredColorScheme.cpp
     CSS/Ratio.cpp
@@ -100,6 +101,7 @@ set(SOURCES
     CSS/StyleValues/AngleStyleValue.cpp
     CSS/StyleValues/BackgroundRepeatStyleValue.cpp
     CSS/StyleValues/BackgroundSizeStyleValue.cpp
+    CSS/StyleValues/BasicShapeStyleValue.cpp
     CSS/StyleValues/BorderRadiusStyleValue.cpp
     CSS/StyleValues/CalculatedStyleValue.cpp
     CSS/StyleValues/ColorStyleValue.cpp
@@ -189,7 +191,6 @@ set(SOURCES
     DOM/Text.cpp
     DOM/TreeWalker.cpp
     DOM/XMLDocument.cpp
-    DOMParsing/InnerHTML.cpp
     DOMParsing/XMLSerializer.cpp
     DOMURL/DOMURL.cpp
     DOMURL/URLSearchParams.cpp
@@ -201,6 +202,7 @@ set(SOURCES
     Fetch/BodyInit.cpp
     Fetch/Enums.cpp
     Fetch/Fetching/Checks.cpp
+    Fetch/Fetching/FetchedDataReceiver.cpp
     Fetch/Fetching/Fetching.cpp
     Fetch/Fetching/PendingResponse.cpp
     Fetch/Fetching/RefCountedFlag.cpp
@@ -219,7 +221,9 @@ set(SOURCES
     Fetch/Infrastructure/HTTP/Requests.cpp
     Fetch/Infrastructure/HTTP/Responses.cpp
     Fetch/Infrastructure/HTTP/Statuses.cpp
+    Fetch/Infrastructure/IncrementalReadLoopReadRequest.cpp
     Fetch/Infrastructure/MimeTypeBlocking.cpp
+    Fetch/Infrastructure/NetworkPartitionKey.cpp
     Fetch/Infrastructure/NoSniffBlocking.cpp
     Fetch/Infrastructure/PortBlocking.cpp
     Fetch/Infrastructure/Task.cpp
@@ -252,6 +256,8 @@ set(SOURCES
     HTML/CanvasPattern.cpp
     HTML/CanvasRenderingContext2D.cpp
     HTML/CloseEvent.cpp
+    HTML/CloseWatcher.cpp
+    HTML/CloseWatcherManager.cpp
     HTML/CORSSettingAttribute.cpp
     HTML/CrossOrigin/AbstractOperations.cpp
     HTML/CrossOrigin/Reporting.cpp
@@ -265,8 +271,10 @@ set(SOURCES
     HTML/DOMParser.cpp
     HTML/DOMStringMap.cpp
     HTML/DataTransfer.cpp
+    HTML/ElementInternals.cpp
     HTML/ErrorEvent.cpp
     HTML/EventHandler.cpp
+    HTML/EventSource.cpp
     HTML/EventLoop/EventLoop.cpp
     HTML/EventLoop/Task.cpp
     HTML/EventLoop/TaskQueue.cpp
@@ -424,8 +432,10 @@ set(SOURCES
     HTML/Timer.cpp
     HTML/TimeRanges.cpp
     HTML/ToggleEvent.cpp
+    HTML/TokenizedFeatures.cpp
     HTML/TrackEvent.cpp
     HTML/TraversableNavigable.cpp
+    HTML/UserActivation.cpp
     HTML/VideoTrack.cpp
     HTML/VideoTrackList.cpp
     HTML/WebViewHints.cpp
@@ -439,12 +449,16 @@ set(SOURCES
     HTML/WorkerGlobalScope.cpp
     HTML/WorkerLocation.cpp
     HTML/WorkerNavigator.cpp
+    HTML/ValidityState.cpp
     HighResolutionTime/Performance.cpp
     HighResolutionTime/TimeOrigin.cpp
     Infra/Base64.cpp
     Infra/ByteSequences.cpp
     Infra/JSON.cpp
     Infra/Strings.cpp
+    IndexedDB/IDBFactory.cpp
+    IndexedDB/IDBOpenDBRequest.cpp
+    IndexedDB/IDBRequest.cpp
     Internals/Inspector.cpp
     Internals/InternalAnimationTimeline.cpp
     Internals/Internals.cpp
@@ -457,7 +471,6 @@ set(SOURCES
     Layout/Box.cpp
     Layout/BoxModelMetrics.cpp
     Layout/BreakNode.cpp
-    Layout/ButtonBox.cpp
     Layout/CanvasBox.cpp
     Layout/CheckBox.cpp
     Layout/FlexFormattingContext.cpp
@@ -508,6 +521,7 @@ set(SOURCES
     MathML/TagNames.cpp
     MimeSniff/MimeType.cpp
     MimeSniff/Resource.cpp
+    MixedContent/AbstractOperations.cpp
     Namespace.cpp
     NavigationTiming/EntryNames.cpp
     NavigationTiming/PerformanceTiming.cpp
@@ -515,13 +529,13 @@ set(SOURCES
     Page/EventHandler.cpp
     Page/InputEvent.cpp
     Page/Page.cpp
+    Painting/AffineCommandExecutorCPU.cpp
     Painting/AudioPaintable.cpp
     Painting/BackgroundPainting.cpp
     Painting/BorderRadiiData.cpp
     Painting/BorderPainting.cpp
     Painting/BorderRadiusCornerClipper.cpp
     Painting/BordersData.cpp
-    Painting/ButtonPaintable.cpp
     Painting/CanvasPaintable.cpp
     Painting/Command.cpp
     Painting/CommandExecutorCPU.cpp
@@ -600,6 +614,7 @@ set(SOURCES
     Streams/WritableStreamDefaultWriter.cpp
     SVG/AttributeNames.cpp
     SVG/AttributeParser.cpp
+    SVG/SVGAElement.cpp
     SVG/SVGAnimatedLength.cpp
     SVG/SVGAnimatedNumber.cpp
     SVG/SVGAnimatedRect.cpp
@@ -663,6 +678,8 @@ set(SOURCES
     WebAudio/AudioParam.cpp
     WebAudio/AudioScheduledSourceNode.cpp
     WebAudio/BaseAudioContext.cpp
+    WebAudio/DynamicsCompressorNode.cpp
+    WebAudio/GainNode.cpp
     WebAudio/OfflineAudioContext.cpp
     WebAudio/OscillatorNode.cpp
     WebAudio/PeriodicWave.cpp
@@ -719,7 +736,6 @@ generate_css_implementation()
 set(GENERATED_SOURCES
     ARIA/AriaRoles.cpp
     CSS/DefaultStyleSheetSource.cpp
-    CSS/EasingFunctions.cpp
     CSS/Enums.cpp
     CSS/MathFunctions.cpp
     CSS/MediaFeatureID.cpp
@@ -737,7 +753,7 @@ set(GENERATED_SOURCES
 serenity_lib(LibWeb web)
 
 # NOTE: We link with LibSoftGPU here instead of lazy loading it via dlopen() so that we do not have to unveil the library and pledge prot_exec.
-target_link_libraries(LibWeb PRIVATE LibCore LibCrypto LibJS LibMarkdown LibHTTP LibGemini LibGUI LibGfx LibIPC LibLocale LibRegex LibSoftGPU LibSyntax LibTextCodec LibUnicode LibAudio LibVideo LibWasm LibXML LibIDL LibURL LibTLS)
+target_link_libraries(LibWeb PRIVATE LibCore LibCrypto LibJS LibMarkdown LibHTTP LibGemini LibGfx LibIPC LibLocale LibRegex LibSoftGPU LibSyntax LibTextCodec LibUnicode LibAudio LibVideo LibWasm LibXML LibIDL LibURL LibTLS)
 
 if (HAS_ACCELERATED_GRAPHICS)
     target_link_libraries(LibWeb PRIVATE ${ACCEL_GFX_LIBS})

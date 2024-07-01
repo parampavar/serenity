@@ -41,9 +41,21 @@ public:
     void disconnect(JS::NonnullGCPtr<AudioParam> destination_param);
     void disconnect(JS::NonnullGCPtr<AudioParam> destination_param, WebIDL::UnsignedLong output);
 
+    // https://webaudio.github.io/web-audio-api/#dom-audionode-context
+    JS::NonnullGCPtr<BaseAudioContext const> context() const
+    {
+        // The BaseAudioContext which owns this AudioNode.
+        return m_context;
+    }
+
 protected:
+    AudioNode(JS::Realm&, JS::NonnullGCPtr<BaseAudioContext>);
+
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
+
+private:
+    JS::NonnullGCPtr<BaseAudioContext> m_context;
 };
 
 }

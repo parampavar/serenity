@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2024, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -33,6 +33,13 @@ struct ShadowRootInit {
     Bindings::ShadowRootMode mode;
     bool delegates_focus = false;
     Bindings::SlotAssignmentMode slot_assignment { Bindings::SlotAssignmentMode::Named };
+    bool clonable = false;
+    bool serializable = false;
+};
+
+struct GetHTMLOptions {
+    bool serializable_shadow_roots { false };
+    Vector<JS::Handle<ShadowRoot>> shadow_roots {};
 };
 
 // https://w3c.github.io/csswg-drafts/cssom-view-1/#dictdef-scrollintoviewoptions
@@ -126,7 +133,8 @@ public:
     DOMTokenList* class_list();
 
     WebIDL::ExceptionOr<JS::NonnullGCPtr<ShadowRoot>> attach_shadow(ShadowRootInit init);
-    JS::GCPtr<ShadowRoot> shadow_root() const;
+    WebIDL::ExceptionOr<void> attach_a_shadow_root(Bindings::ShadowRootMode mode, bool clonable, bool serializable, bool delegates_focus, Bindings::SlotAssignmentMode slot_assignment);
+    JS::GCPtr<ShadowRoot> shadow_root_for_bindings() const;
 
     WebIDL::ExceptionOr<bool> matches(StringView selectors) const;
     WebIDL::ExceptionOr<DOM::Element const*> closest(StringView selectors) const;
@@ -137,9 +145,9 @@ public:
     int client_height() const;
     [[nodiscard]] double current_css_zoom() const;
 
-    void for_each_attribute(NOESCAPE Function<void(Attr const&)>) const;
+    void for_each_attribute(Function<void(Attr const&)>) const;
 
-    void for_each_attribute(NOESCAPE Function<void(FlyString const&, String const&)>) const;
+    void for_each_attribute(Function<void(FlyString const&, String const&)>) const;
 
     bool has_class(FlyString const&, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
     Vector<FlyString> const& class_names() const { return m_classes; }
@@ -160,8 +168,8 @@ public:
     Optional<CSS::Selector::PseudoElement::Type> use_pseudo_element() const { return m_use_pseudo_element; }
     void set_use_pseudo_element(Optional<CSS::Selector::PseudoElement::Type> use_pseudo_element) { m_use_pseudo_element = move(use_pseudo_element); }
 
-    Layout::NodeWithStyle* layout_node();
-    Layout::NodeWithStyle const* layout_node() const;
+    JS::GCPtr<Layout::NodeWithStyle> layout_node();
+    JS::GCPtr<Layout::NodeWithStyle const> layout_node() const;
 
     CSS::StyleProperties* computed_css_values() { return m_computed_css_values.ptr(); }
     CSS::StyleProperties const* computed_css_values() const { return m_computed_css_values.ptr(); }
@@ -176,10 +184,16 @@ public:
 
     CSS::StyleSheetList& document_or_shadow_root_style_sheets();
 
+    WebIDL::ExceptionOr<JS::NonnullGCPtr<DOM::DocumentFragment>> parse_fragment(StringView markup);
+
     WebIDL::ExceptionOr<String> inner_html() const;
     WebIDL::ExceptionOr<void> set_inner_html(StringView);
 
-    WebIDL::ExceptionOr<void> insert_adjacent_html(String const& position, String const& text);
+    WebIDL::ExceptionOr<void> set_html_unsafe(StringView);
+
+    WebIDL::ExceptionOr<String> get_html(GetHTMLOptions const&) const;
+
+    WebIDL::ExceptionOr<void> insert_adjacent_html(String const& position, String const&);
 
     WebIDL::ExceptionOr<String> outer_html() const;
     WebIDL::ExceptionOr<void> set_outer_html(String const&);
@@ -192,8 +206,8 @@ public:
     JS::NonnullGCPtr<HTMLCollection> get_elements_by_class_name(StringView);
 
     bool is_shadow_host() const;
-    ShadowRoot* shadow_root_internal() { return m_shadow_root.ptr(); }
-    ShadowRoot const* shadow_root_internal() const { return m_shadow_root.ptr(); }
+    JS::GCPtr<ShadowRoot> shadow_root() { return m_shadow_root; }
+    JS::GCPtr<ShadowRoot const> shadow_root() const { return m_shadow_root; }
     void set_shadow_root(JS::GCPtr<ShadowRoot>);
 
     void set_custom_properties(Optional<CSS::Selector::PseudoElement::Type>, HashMap<FlyString, CSS::StyleProperty> custom_properties);
@@ -335,9 +349,9 @@ public:
     void set_custom_element_state(CustomElementState value) { m_custom_element_state = value; }
     void setup_custom_element_from_constructor(HTML::CustomElementDefinition& custom_element_definition, Optional<String> const& is_value);
 
-    void scroll(HTML::ScrollToOptions const&);
+    void scroll(HTML::ScrollToOptions);
     void scroll(double x, double y);
-    void scroll_by(HTML::ScrollToOptions const&);
+    void scroll_by(HTML::ScrollToOptions);
     void scroll_by(double x, double y);
 
     void register_intersection_observer(Badge<IntersectionObserver::IntersectionObserver>, IntersectionObserver::IntersectionObserverRegistration);
@@ -391,6 +405,8 @@ protected:
 
     virtual bool id_reference_exists(String const&) const override;
 
+    CustomElementState custom_element_state() const { return m_custom_element_state; }
+
 private:
     void make_html_uppercased_qualified_name();
 
@@ -399,6 +415,10 @@ private:
     WebIDL::ExceptionOr<JS::GCPtr<Node>> insert_adjacent(StringView where, JS::NonnullGCPtr<Node> node);
 
     void enqueue_an_element_on_the_appropriate_element_queue();
+
+    Optional<Directionality> auto_directionality() const;
+    Directionality parent_directionality() const;
+    bool is_auto_directionality_form_associated_element() const;
 
     QualifiedName m_qualified_name;
     FlyString m_html_uppercased_qualified_name;

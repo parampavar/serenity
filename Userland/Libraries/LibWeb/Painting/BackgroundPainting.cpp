@@ -66,7 +66,7 @@ static Vector<Gfx::Path> compute_text_clip_paths(PaintContext& context, Paintabl
         Gfx::Path glyph_run_path;
         for (auto glyph : fragment.glyph_run().glyphs()) {
             glyph.visit([&](auto& glyph) {
-                glyph.font = *glyph.font->with_size(glyph.font->point_size() * static_cast<float>(context.device_pixels_per_css_pixel()));
+                glyph.font = glyph.font->with_size(glyph.font->point_size() * static_cast<float>(context.device_pixels_per_css_pixel()));
                 glyph.position = glyph.position.scaled(context.device_pixels_per_css_pixel());
             });
 
@@ -277,15 +277,15 @@ void paint_background(PaintContext& context, Layout::NodeWithStyleAndBoxModelMet
         CSSPixelRect image_rect;
         switch (layer.size_type) {
         case CSS::BackgroundSize::Contain: {
-            double max_width_ratio = (background_positioning_area.width() / concrete_image_size.width()).to_double();
-            double max_height_ratio = (background_positioning_area.height() / concrete_image_size.height()).to_double();
+            double max_width_ratio = background_positioning_area.width().to_double() / concrete_image_size.width().to_double();
+            double max_height_ratio = background_positioning_area.height().to_double() / concrete_image_size.height().to_double();
             double ratio = min(max_width_ratio, max_height_ratio);
             image_rect.set_size(concrete_image_size.width().scaled(ratio), concrete_image_size.height().scaled(ratio));
             break;
         }
         case CSS::BackgroundSize::Cover: {
-            double max_width_ratio = (background_positioning_area.width() / concrete_image_size.width()).to_double();
-            double max_height_ratio = (background_positioning_area.height() / concrete_image_size.height()).to_double();
+            double max_width_ratio = background_positioning_area.width().to_double() / concrete_image_size.width().to_double();
+            double max_height_ratio = background_positioning_area.height().to_double() / concrete_image_size.height().to_double();
             double ratio = max(max_width_ratio, max_height_ratio);
             image_rect.set_size(concrete_image_size.width().scaled(ratio), concrete_image_size.height().scaled(ratio));
             break;

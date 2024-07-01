@@ -9,15 +9,6 @@ function(serenity_set_implicit_links target_name)
     # slightly outdated stub in the sysroot, but have not yet installed the freshly
     # built LibC.
     target_link_libraries(${target_name} PRIVATE LibC)
-
-    # Same goes for -lssp_nonshared, which is required during build time but is not
-    # yet installed in the sysroot. However, we just want to add the link directory
-    # and a dependency here, since actually linking the library is decided on by
-    # passing one of the -fstack-protector options.
-    # -lssp is contained inside LibC, so that case is handled by the above and a linker
-    # script.
-    target_link_directories(${target_name} PRIVATE "$<TARGET_FILE_DIR:ssp_nonshared>")
-    add_dependencies(${target_name} ssp_nonshared)
 endfunction()
 
 function(serenity_install_headers target_name)
@@ -61,6 +52,7 @@ if (NOT COMMAND serenity_lib)
         add_library(${target_name} ${SERENITY_LIB_TYPE} ${SOURCES} ${GENERATED_SOURCES})
         set_target_properties(${target_name} PROPERTIES EXCLUDE_FROM_ALL TRUE)
         set_target_properties(${target_name} PROPERTIES VERSION "serenity")
+        target_link_libraries(${target_name} PUBLIC GenericClangPlugin)
         install(TARGETS ${target_name} DESTINATION ${CMAKE_INSTALL_LIBDIR} OPTIONAL)
         set_target_properties(${target_name} PROPERTIES OUTPUT_NAME ${fs_name})
         serenity_generated_sources(${target_name})
@@ -89,6 +81,7 @@ if (NOT COMMAND serenity_bin)
     function(serenity_bin target_name)
         serenity_install_sources()
         add_executable(${target_name} ${SOURCES})
+        target_link_libraries(${target_name} PUBLIC GenericClangPlugin)
         set_target_properties(${target_name} PROPERTIES EXCLUDE_FROM_ALL TRUE)
         install(TARGETS ${target_name} RUNTIME DESTINATION bin OPTIONAL)
         serenity_generated_sources(${target_name})
@@ -187,7 +180,7 @@ function(remove_path_if_version_changed version version_file cache_path)
     endif()
 endfunction()
 
-function(invoke_generator name generator version_file header implementation)
+function(invoke_generator name generator primary_source header implementation)
     cmake_parse_arguments(invoke_generator "" "" "arguments;dependencies" ${ARGN})
 
     add_custom_command(
@@ -197,7 +190,7 @@ function(invoke_generator name generator version_file header implementation)
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${implementation}.tmp" "${implementation}"
         COMMAND "${CMAKE_COMMAND}" -E remove "${header}.tmp" "${implementation}.tmp"
         VERBATIM
-        DEPENDS ${generator} ${invoke_generator_dependencies} "${version_file}"
+        DEPENDS ${generator} ${invoke_generator_dependencies} "${primary_source}"
     )
 
     add_custom_target("generate_${name}" DEPENDS "${header}" "${implementation}")
@@ -207,24 +200,33 @@ function(invoke_generator name generator version_file header implementation)
 endfunction()
 
 function(download_file_multisource urls path)
+    cmake_parse_arguments(DOWNLOAD "" "SHA256" "" ${ARGN})
+
+    if (NOT "${DOWNLOAD_SHA256}" STREQUAL "")
+        set(DOWNLOAD_SHA256 EXPECTED_HASH "SHA256=${DOWNLOAD_SHA256}")
+    endif()
+
     if (NOT EXISTS "${path}")
         if (NOT ENABLE_NETWORK_DOWNLOADS)
             message(FATAL_ERROR "${path} does not exist, and unable to download it")
         endif()
+
         get_filename_component(file "${path}" NAME)
+        set(tmp_path "${path}.tmp")
 
         foreach(url ${urls})
             message(STATUS "Downloading file ${file} from ${url}")
 
-            file(DOWNLOAD "${url}" "${path}" INACTIVITY_TIMEOUT 10 STATUS download_result)
+            file(DOWNLOAD "${url}" "${tmp_path}" INACTIVITY_TIMEOUT 10 STATUS download_result ${DOWNLOAD_SHA256})
             list(GET download_result 0 status_code)
             list(GET download_result 1 error_message)
 
             if (status_code EQUAL 0)
+                file(RENAME "${tmp_path}" "${path}")
                 break()
             endif()
 
-            file(REMOVE "${path}")
+            file(REMOVE "${tmp_path}")
             message(WARNING "Failed to download ${url}: ${error_message}")
         endforeach()
 
@@ -235,12 +237,33 @@ function(download_file_multisource urls path)
 endfunction()
 
 function(download_file url path)
+    cmake_parse_arguments(DOWNLOAD "" "SHA256" "" ${ARGN})
+
     # If the timestamp doesn't match exactly, the Web Archive should redirect to the closest archived file automatically.
-    download_file_multisource("${url};https://web.archive.org/web/99991231235959/${url}" "${path}")
+    download_file_multisource("${url};https://web.archive.org/web/99991231235959/${url}" "${path}" SHA256 "${DOWNLOAD_SHA256}")
 endfunction()
 
 function(extract_path dest_dir zip_path source_path dest_path)
     if (EXISTS "${zip_path}" AND NOT EXISTS "${dest_path}")
         file(ARCHIVE_EXTRACT INPUT "${zip_path}" DESTINATION "${dest_dir}" PATTERNS "${source_path}")
     endif()
+endfunction()
+
+function(add_lagom_library_install_rules target_name)
+    cmake_parse_arguments(PARSE_ARGV 1 LAGOM_INSTALL_RULES "" "ALIAS_NAME" "")
+    if (NOT LAGOM_INSTALL_RULES_ALIAS_NAME)
+        set(LAGOM_INSTALL_RULES_ALIAS_NAME ${target_name})
+    endif()
+     # Don't make alias when we're going to import a previous build for Tools
+    # FIXME: Is there a better way to write this?
+    if (NOT ENABLE_FUZZERS AND NOT CMAKE_CROSSCOMPILING)
+        # alias for parity with exports
+        add_library(Lagom::${LAGOM_INSTALL_RULES_ALIAS_NAME} ALIAS ${target_name})
+    endif()
+    install(TARGETS ${target_name} EXPORT LagomTargets
+        RUNTIME COMPONENT Lagom_Runtime
+        LIBRARY COMPONENT Lagom_Runtime NAMELINK_COMPONENT Lagom_Development
+        ARCHIVE COMPONENT Lagom_Development
+        INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    )
 endfunction()

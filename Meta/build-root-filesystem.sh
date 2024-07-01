@@ -137,7 +137,7 @@ chmod 755 mnt/res/devel/templates/*.postcreate
 echo "done"
 
 printf "creating initial filesystem structure... "
-for dir in bin etc proc mnt tmp boot mod var/run usr/local usr/bin; do
+for dir in bin etc proc mnt tmp boot www mod var/run usr/local usr/Ports usr/bin; do
     mkdir -p mnt/$dir
 done
 chmod 700 mnt/boot
@@ -194,7 +194,7 @@ chown -R 200:100 mnt/home/nona
 echo "done"
 
 printf "adding some desktop icons... "
-ln -sf /bin/Browser mnt/home/anon/Desktop/Ladybird
+ln -sf /bin/Browser mnt/home/anon/Desktop/
 ln -sf /bin/TextEditor mnt/home/anon/Desktop/Text\ Editor
 ln -sf /bin/Help mnt/home/anon/Desktop/
 ln -sf /home/anon mnt/home/anon/Desktop/Home
@@ -207,7 +207,7 @@ ln -sf Shell mnt/bin/sh
 ln -sf test mnt/bin/[
 ln -sf less mnt/bin/more
 ln -sf /bin/env mnt/usr/bin/env
-ln -sf /bin/SystemServer mnt/init
+ln -sf /bin/init mnt/init
 echo "done"
 
 printf "installing 'checksum' variants... "

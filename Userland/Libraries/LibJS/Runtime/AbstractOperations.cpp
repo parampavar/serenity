@@ -644,7 +644,7 @@ ThrowCompletionOr<Value> perform_eval(VM& vm, Value x, CallerMode strict_caller,
     // FIXME: We don't have this concept yet.
 
     // 20. Let evalContext be a new ECMAScript code execution context.
-    auto eval_context = ExecutionContext::create(vm.heap());
+    auto eval_context = ExecutionContext::create();
 
     // 21. Set evalContext's Function to null.
     // NOTE: This was done in the construction of eval_context.
@@ -685,7 +685,7 @@ ThrowCompletionOr<Value> perform_eval(VM& vm, Value x, CallerMode strict_caller,
 
     // 29. If result.[[Type]] is normal, then
     //     a. Set result to the result of evaluating body.
-    auto executable_result = Bytecode::Generator::generate(vm, program, {});
+    auto executable_result = Bytecode::Generator::generate_from_ast_node(vm, program, {});
     if (executable_result.is_error())
         return vm.throw_completion<InternalError>(ErrorType::NotImplemented, TRY_OR_THROW_OOM(vm, executable_result.error().to_string()));
 
@@ -693,7 +693,7 @@ ThrowCompletionOr<Value> perform_eval(VM& vm, Value x, CallerMode strict_caller,
     executable->name = "eval"sv;
     if (Bytecode::g_dump_bytecode)
         executable->dump();
-    auto result_or_error = vm.bytecode_interpreter().run_executable(*executable, nullptr);
+    auto result_or_error = vm.bytecode_interpreter().run_executable(*executable, {});
     if (result_or_error.value.is_error())
         return result_or_error.value.release_error();
 
@@ -972,7 +972,8 @@ ThrowCompletionOr<void> eval_declaration_instantiation(VM& vm, Program const& pr
     for (auto& declaration : functions_to_initialize.in_reverse()) {
         // a. Let fn be the sole element of the BoundNames of f.
         // b. Let fo be InstantiateFunctionObject of f with arguments lexEnv and privateEnv.
-        auto function = ECMAScriptFunctionObject::create(realm, declaration.name(), declaration.source_text(), declaration.body(), declaration.parameters(), declaration.function_length(), declaration.local_variables_names(), lexical_environment, private_environment, declaration.kind(), declaration.is_strict_mode(), declaration.might_need_arguments_object());
+        auto function = ECMAScriptFunctionObject::create(realm, declaration.name(), declaration.source_text(), declaration.body(), declaration.parameters(), declaration.function_length(), declaration.local_variables_names(), lexical_environment, private_environment, declaration.kind(), declaration.is_strict_mode(),
+            declaration.parsing_insights());
 
         // c. If varEnv is a global Environment Record, then
         if (global_var_environment) {

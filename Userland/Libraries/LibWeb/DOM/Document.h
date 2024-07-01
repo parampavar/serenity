@@ -175,6 +175,10 @@ public:
     HTML::HTMLHtmlElement* html_element();
     HTML::HTMLHeadElement* head();
     JS::GCPtr<HTML::HTMLTitleElement> title_element();
+
+    StringView dir() const;
+    void set_dir(String const&);
+
     HTML::HTMLElement* body();
 
     HTML::HTMLHtmlElement const* html_element() const
@@ -255,6 +259,9 @@ public:
     JS::NonnullGCPtr<HTMLCollection> forms();
     JS::NonnullGCPtr<HTMLCollection> scripts();
     JS::NonnullGCPtr<HTML::HTMLAllCollection> all();
+
+    // https://drafts.csswg.org/css-font-loading/#font-source
+    JS::NonnullGCPtr<CSS::FontFaceSet> fonts();
 
     void clear();
     void capture_events();
@@ -393,6 +400,9 @@ public:
     bool is_fully_active() const;
     bool is_active() const;
 
+    [[nodiscard]] bool allow_declarative_shadow_roots() const;
+    void set_allow_declarative_shadow_roots(bool);
+
     JS::NonnullGCPtr<HTML::History> history();
     JS::NonnullGCPtr<HTML::History> history() const;
 
@@ -467,6 +477,9 @@ public:
     bool needs_full_style_update() const { return m_needs_full_style_update; }
     void set_needs_full_style_update(bool b) { m_needs_full_style_update = b; }
 
+    void set_needs_to_refresh_clip_state(bool b);
+    void set_needs_to_refresh_scroll_state(bool b);
+
     bool has_active_favicon() const { return m_active_favicon; }
     void check_favicon_after_loading_link_resource();
 
@@ -507,6 +520,7 @@ public:
     Vector<JS::Handle<HTML::Navigable>> const descendant_navigables() const;
     Vector<JS::Handle<HTML::Navigable>> inclusive_descendant_navigables();
     Vector<JS::Handle<HTML::Navigable>> ancestor_navigables();
+    Vector<JS::Handle<HTML::Navigable>> const ancestor_navigables() const;
     Vector<JS::Handle<HTML::Navigable>> inclusive_ancestor_navigables();
     Vector<JS::Handle<HTML::Navigable>> document_tree_child_navigables();
 
@@ -586,19 +600,23 @@ public:
     void restore_the_history_object_state(JS::NonnullGCPtr<HTML::SessionHistoryEntry> entry);
 
     JS::NonnullGCPtr<Animations::DocumentTimeline> timeline();
+    auto const& last_animation_frame_timestamp() const { return m_last_animation_frame_timestamp; }
 
     void associate_with_timeline(JS::NonnullGCPtr<Animations::AnimationTimeline>);
     void disassociate_with_timeline(JS::NonnullGCPtr<Animations::AnimationTimeline>);
 
     struct PendingAnimationEvent {
         JS::NonnullGCPtr<DOM::Event> event;
-        JS::NonnullGCPtr<Animations::Animation> target;
+        JS::NonnullGCPtr<Animations::Animation> animation;
+        JS::NonnullGCPtr<DOM::EventTarget> target;
         Optional<double> scheduled_event_time;
     };
     void append_pending_animation_event(PendingAnimationEvent const&);
     void update_animations_and_send_events(Optional<double> const& timestamp);
     void remove_replaced_animations();
     void ensure_animation_timer();
+
+    Vector<JS::NonnullGCPtr<Animations::Animation>> get_animations();
 
     bool ready_to_run_scripts() const { return m_ready_to_run_scripts; }
     void set_ready_to_run_scripts() { m_ready_to_run_scripts = true; }
@@ -655,6 +673,11 @@ public:
 
     // Does document represent an embedded svg img
     [[nodiscard]] bool is_decoded_svg() const;
+
+    Vector<JS::Handle<DOM::Range>> find_matching_text(String const&, CaseSensitivity);
+
+    void parse_html_from_a_string(StringView);
+    static JS::NonnullGCPtr<Document> parse_html_unsafe(JS::VM&, StringView);
 
 protected:
     virtual void initialize(JS::Realm&) override;
@@ -810,6 +833,9 @@ private:
     JS::GCPtr<HTMLCollection> m_scripts;
     JS::GCPtr<HTML::HTMLAllCollection> m_all;
 
+    // https://drafts.csswg.org/css-font-loading/#font-source
+    JS::GCPtr<CSS::FontFaceSet> m_fonts;
+
     // https://html.spec.whatwg.org/#completely-loaded-time
     Optional<AK::UnixDateTime> m_completely_loaded_time;
 
@@ -873,6 +899,7 @@ private:
 
     // https://www.w3.org/TR/web-animations-1/#document-default-document-timeline
     JS::GCPtr<Animations::DocumentTimeline> m_default_timeline;
+    Optional<double> m_last_animation_frame_timestamp;
 
     // https://www.w3.org/TR/web-animations-1/#pending-animation-event-queue
     Vector<PendingAnimationEvent> m_pending_animation_event_queue;
@@ -908,6 +935,9 @@ private:
     // instead they generate boxes as if they were siblings of the root element.
     OrderedHashTable<JS::NonnullGCPtr<Element>> m_top_layer_elements;
     OrderedHashTable<JS::NonnullGCPtr<Element>> m_top_layer_pending_removals;
+
+    // https://dom.spec.whatwg.org/#document-allow-declarative-shadow-roots
+    bool m_allow_declarative_shadow_roots { false };
 };
 
 template<>

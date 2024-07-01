@@ -60,7 +60,7 @@ WebIDL::ExceptionOr<ImportMap> parse_import_map_string(JS::Realm& realm, ByteStr
 
     // 7. If parsed's keys contains any items besides "imports" or "scopes", then the user agent should report a warning to the console indicating that an invalid top-level key was present in the import map.
     for (auto& key : parsed_object.shape().property_table().keys()) {
-        if (key.as_string() == "imports" || key.as_string() == "imports")
+        if (key.as_string().is_one_of("imports", "scopes"))
             continue;
 
         auto& console = realm.intrinsics().console_object()->console();
@@ -71,6 +71,7 @@ WebIDL::ExceptionOr<ImportMap> parse_import_map_string(JS::Realm& realm, ByteStr
     // 8. Return an import map whose imports are sortedAndNormalizedImports and whose scopes are sortedAndNormalizedScopes.
     ImportMap import_map;
     import_map.set_imports(sorted_and_normalised_imports);
+    import_map.set_scopes(sorted_and_normalised_scopes);
     return import_map;
 }
 

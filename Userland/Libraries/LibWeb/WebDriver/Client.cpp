@@ -69,6 +69,7 @@ static constexpr auto s_webdriver_endpoints = Array {
     ROUTE(POST, "/session/:session_id/window/maximize"sv, maximize_window),
     ROUTE(POST, "/session/:session_id/window/minimize"sv, minimize_window),
     ROUTE(POST, "/session/:session_id/window/fullscreen"sv, fullscreen_window),
+    ROUTE(POST, "/session/:session_id/window/consume-user-activation"sv, consume_user_activation),
     ROUTE(POST, "/session/:session_id/element"sv, find_element),
     ROUTE(POST, "/session/:session_id/elements"sv, find_elements),
     ROUTE(POST, "/session/:session_id/element/:element_id/element"sv, find_element_from_element),
@@ -251,7 +252,7 @@ ErrorOr<JsonValue, Client::WrappedError> Client::read_body_as_json()
     // FIXME: Check the Content-Type is actually application/json.
     size_t content_length = 0;
 
-    for (auto const& header : m_request->headers()) {
+    for (auto const& header : m_request->headers().headers()) {
         if (header.name.equals_ignoring_ascii_case("Content-Length"sv)) {
             content_length = header.value.to_number<size_t>(TrimWhitespace::Yes).value_or(0);
             break;
@@ -280,7 +281,7 @@ ErrorOr<void, Client::WrappedError> Client::handle_request(JsonValue body)
 ErrorOr<void, Client::WrappedError> Client::send_success_response(JsonValue result)
 {
     bool keep_alive = false;
-    if (auto it = m_request->headers().find_if([](auto& header) { return header.name.equals_ignoring_ascii_case("Connection"sv); }); !it.is_end())
+    if (auto it = m_request->headers().headers().find_if([](auto& header) { return header.name.equals_ignoring_ascii_case("Connection"sv); }); !it.is_end())
         keep_alive = it->value.trim_whitespace().equals_ignoring_ascii_case("keep-alive"sv);
 
     result = make_success_response(move(result));
@@ -319,12 +320,15 @@ ErrorOr<void, Client::WrappedError> Client::send_error_response(Error const& err
     dbgln_if(WEBDRIVER_DEBUG, "Sending error response: {} {}: {}", error.http_status, error.error, error.message);
     auto reason = HTTP::HttpResponse::reason_phrase_for_code(error.http_status);
 
-    JsonObject result;
-    result.set("error", error.error);
-    result.set("message", error.message);
-    result.set("stacktrace", "");
+    JsonObject error_response;
+    error_response.set("error", error.error);
+    error_response.set("message", error.message);
+    error_response.set("stacktrace", "");
     if (error.data.has_value())
-        result.set("data", *error.data);
+        error_response.set("data", *error.data);
+
+    JsonObject result;
+    result.set("value", move(error_response));
 
     StringBuilder content_builder;
     result.serialize(content_builder);

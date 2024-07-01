@@ -36,12 +36,14 @@ set(SOURCES
     ICC/Tags.cpp
     ICC/TagTypes.cpp
     ICC/WellKnownProfiles.cpp
+    ImageFormats/AnimationWriter.cpp
     ImageFormats/BMPLoader.cpp
     ImageFormats/BMPWriter.cpp
     ImageFormats/BooleanDecoder.cpp
     ImageFormats/CCITTDecoder.cpp
     ImageFormats/DDSLoader.cpp
     ImageFormats/GIFLoader.cpp
+    ImageFormats/GIFWriter.cpp
     ImageFormats/ICOLoader.cpp
     ImageFormats/ILBMLoader.cpp
     ImageFormats/ImageDecoder.cpp
@@ -69,7 +71,11 @@ set(SOURCES
     ImageFormats/WebPLoader.cpp
     ImageFormats/WebPLoaderLossless.cpp
     ImageFormats/WebPLoaderLossy.cpp
+    ImageFormats/WebPSharedLossless.cpp
+    ImageFormats/WebPWriter.cpp
+    ImageFormats/WebPWriterLossless.cpp
     ImmutableBitmap.cpp
+    MedianCut.cpp
     Painter.cpp
     Palette.cpp
     Path.cpp

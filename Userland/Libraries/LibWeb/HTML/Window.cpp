@@ -7,7 +7,6 @@
  */
 
 #include <AK/Base64.h>
-#include <AK/GenericLexer.h>
 #include <AK/Utf8View.h>
 #include <LibIPC/File.h>
 #include <LibJS/Runtime/AbstractOperations.h>
@@ -34,6 +33,7 @@
 #include <LibWeb/DOM/HTMLCollection.h>
 #include <LibWeb/DOMURL/DOMURL.h>
 #include <LibWeb/HTML/BrowsingContext.h>
+#include <LibWeb/HTML/CloseWatcherManager.h>
 #include <LibWeb/HTML/CustomElements/CustomElementRegistry.h>
 #include <LibWeb/HTML/DocumentState.h>
 #include <LibWeb/HTML/EventHandler.h>
@@ -83,7 +83,7 @@ void run_animation_frame_callbacks(DOM::Document& document, double now)
 
 class IdleCallback : public RefCounted<IdleCallback> {
 public:
-    explicit IdleCallback(Function<JS::Completion(JS::NonnullGCPtr<RequestIdleCallback::IdleDeadline>)> handler, u32 handle)
+    explicit IdleCallback(ESCAPING Function<JS::Completion(JS::NonnullGCPtr<RequestIdleCallback::IdleDeadline>)> handler, u32 handle)
         : m_handler(move(handler))
         , m_handle(handle)
     {
@@ -130,6 +130,7 @@ void Window::visit_edges(JS::Cell::Visitor& visitor)
     visitor.visit(m_pdf_viewer_mime_type_objects);
     visitor.visit(m_count_queuing_strategy_size_function);
     visitor.visit(m_byte_length_queuing_strategy_size_function);
+    visitor.visit(m_close_watcher_manager);
 }
 
 void Window::finalize()
@@ -139,182 +140,6 @@ void Window::finalize()
 }
 
 Window::~Window() = default;
-
-// https://html.spec.whatwg.org/multipage/nav-history-apis.html#normalizing-the-feature-name
-static String normalize_feature_name(String const& name)
-{
-    // For legacy reasons, there are some aliases of some feature names. To normalize a feature name name, switch on name:
-
-    // "screenx"
-    if (name == "screenx"sv) {
-        // Return "left".
-        return "left"_string;
-    }
-    // "screeny"
-    else if (name == "screeny"sv) {
-        // Return "top".
-        return "top"_string;
-    }
-    // "innerwidth"
-    else if (name == "innerwidth"sv) {
-        // Return "width".
-        return "width"_string;
-    }
-    // "innerheight"
-    else if (name == "innerheight") {
-        // Return "height".
-        return "height"_string;
-    }
-    // Anything else
-    else {
-        // Return name.
-        return name;
-    }
-}
-
-// https://html.spec.whatwg.org/multipage/nav-history-apis.html#concept-window-open-features-tokenize
-static OrderedHashMap<String, String> tokenize_open_features(StringView features)
-{
-    // 1. Let tokenizedFeatures be a new ordered map.
-    OrderedHashMap<String, String> tokenized_features;
-
-    // 2. Let position point at the first code point of features.
-    GenericLexer lexer(features);
-
-    // https://html.spec.whatwg.org/multipage/nav-history-apis.html#feature-separator
-    auto is_feature_separator = [](auto character) {
-        return Infra::is_ascii_whitespace(character) || character == '=' || character == ',';
-    };
-
-    // 3. While position is not past the end of features:
-    while (!lexer.is_eof()) {
-        // 1. Let name be the empty string.
-        String name;
-
-        // 2. Let value be the empty string.
-        String value;
-
-        // 3. Collect a sequence of code points that are feature separators from features given position. This skips past leading separators before the name.
-        lexer.ignore_while(is_feature_separator);
-
-        // 4. Collect a sequence of code points that are not feature separators from features given position. Set name to the collected characters, converted to ASCII lowercase.
-        name = MUST(String::from_byte_string(lexer.consume_until(is_feature_separator).to_lowercase_string()));
-
-        // 5. Set name to the result of normalizing the feature name name.
-        name = normalize_feature_name(name);
-
-        // 6. While position is not past the end of features and the code point at position in features is not U+003D (=):
-        //    1. If the code point at position in features is U+002C (,), or if it is not a feature separator, then break.
-        //    2. Advance position by 1.
-        lexer.ignore_while(Infra::is_ascii_whitespace);
-
-        // 7. If the code point at position in features is a feature separator:
-        //    1. While position is not past the end of features and the code point at position in features is a feature separator:
-        //       1. If the code point at position in features is U+002C (,), then break.
-        //       2. Advance position by 1.
-        lexer.ignore_while([](auto character) { return Infra::is_ascii_whitespace(character) || character == '='; });
-
-        // 2. Collect a sequence of code points that are not feature separators code points from features given position. Set value to the collected code points, converted to ASCII lowercase.
-        value = MUST(String::from_byte_string(lexer.consume_until(is_feature_separator).to_lowercase_string()));
-
-        // 8. If name is not the empty string, then set tokenizedFeatures[name] to value.
-        if (!name.is_empty())
-            tokenized_features.set(move(name), move(value));
-    }
-
-    // 4. Return tokenizedFeatures.
-    return tokenized_features;
-}
-
-// https://html.spec.whatwg.org/multipage/nav-history-apis.html#concept-window-open-features-parse-boolean
-template<Enum T>
-static T parse_boolean_feature(StringView value)
-{
-    // 1. If value is the empty string, then return true.
-    if (value.is_empty())
-        return T::Yes;
-
-    // 2. If value is "yes", then return true.
-    if (value == "yes"sv)
-        return T::Yes;
-
-    // 3. If value is "true", then return true.
-    if (value == "true"sv)
-        return T::Yes;
-
-    // 4. Let parsed be the result of parsing value as an integer.
-    auto parsed = value.to_number<i64>();
-
-    // 5. If parsed is an error, then set it to 0.
-    if (!parsed.has_value())
-        parsed = 0;
-
-    // 6. Return false if parsed is 0, and true otherwise.
-    return parsed == 0 ? T::No : T::Yes;
-}
-
-//  https://html.spec.whatwg.org/multipage/window-object.html#popup-window-is-requested
-static TokenizedFeature::Popup check_if_a_popup_window_is_requested(OrderedHashMap<String, String> const& tokenized_features)
-{
-    // 1. If tokenizedFeatures is empty, then return false.
-    if (tokenized_features.is_empty())
-        return TokenizedFeature::Popup::No;
-
-    // 2. If tokenizedFeatures["popup"] exists, then return the result of parsing tokenizedFeatures["popup"] as a boolean feature.
-    if (auto popup_feature = tokenized_features.get("popup"sv); popup_feature.has_value())
-        return parse_boolean_feature<TokenizedFeature::Popup>(*popup_feature);
-
-    // https://html.spec.whatwg.org/multipage/window-object.html#window-feature-is-set
-    auto check_if_a_window_feature_is_set = [&]<Enum T>(StringView feature_name, T default_value) {
-        // 1. If tokenizedFeatures[featureName] exists, then return the result of parsing tokenizedFeatures[featureName] as a boolean feature.
-        if (auto feature = tokenized_features.get(feature_name); feature.has_value())
-            return parse_boolean_feature<T>(*feature);
-
-        // 2. Return defaultValue.
-        return default_value;
-    };
-
-    // 3. Let location be the result of checking if a window feature is set, given tokenizedFeatures, "location", and false.
-    auto location = check_if_a_window_feature_is_set("location"sv, TokenizedFeature::Location::No);
-
-    // 4. Let toolbar be the result of checking if a window feature is set, given tokenizedFeatures, "toolbar", and false.
-    auto toolbar = check_if_a_window_feature_is_set("toolbar"sv, TokenizedFeature::Toolbar::No);
-
-    // 5. If location and toolbar are both false, then return true.
-    if (location == TokenizedFeature::Location::No && toolbar == TokenizedFeature::Toolbar::No)
-        return TokenizedFeature::Popup::Yes;
-
-    // 6. Let menubar be the result of checking if a window feature is set, given tokenizedFeatures, menubar", and false.
-    auto menubar = check_if_a_window_feature_is_set("menubar"sv, TokenizedFeature::Menubar::No);
-
-    // 7. If menubar is false, then return true.
-    if (menubar == TokenizedFeature::Menubar::No)
-        return TokenizedFeature::Popup::Yes;
-
-    // 8. Let resizable be the result of checking if a window feature is set, given tokenizedFeatures, "resizable", and true.
-    auto resizable = check_if_a_window_feature_is_set("resizable"sv, TokenizedFeature::Resizable::Yes);
-
-    // 9. If resizable is false, then return true.
-    if (resizable == TokenizedFeature::Resizable::No)
-        return TokenizedFeature::Popup::Yes;
-
-    // 10. Let scrollbars be the result of checking if a window feature is set, given tokenizedFeatures, "scrollbars", and false.
-    auto scrollbars = check_if_a_window_feature_is_set("scrollbars"sv, TokenizedFeature::Scrollbars::No);
-
-    // 11. If scrollbars is false, then return true.
-    if (scrollbars == TokenizedFeature::Scrollbars::No)
-        return TokenizedFeature::Popup::Yes;
-
-    // 12. Let status be the result of checking if a window feature is set, given tokenizedFeatures, "status", and false.
-    auto status = check_if_a_window_feature_is_set("status"sv, TokenizedFeature::Status::No);
-
-    // 13. If status is false, then return true.
-    if (status == TokenizedFeature::Status::No)
-        return TokenizedFeature::Popup::Yes;
-
-    // 14. Return false.
-    return TokenizedFeature::Popup::No;
-}
 
 // https://html.spec.whatwg.org/multipage/window-object.html#window-open-steps
 WebIDL::ExceptionOr<JS::GCPtr<WindowProxy>> Window::open_impl(StringView url, StringView target, StringView features)
@@ -366,7 +191,7 @@ WebIDL::ExceptionOr<JS::GCPtr<WindowProxy>> Window::open_impl(StringView url, St
 
     // 10. Let targetNavigable and windowType be the result of applying the rules for choosing a navigable given target, sourceDocument's node navigable, and noopener.
     VERIFY(source_document.navigable());
-    auto [target_navigable, window_type] = source_document.navigable()->choose_a_navigable(target, no_opener);
+    auto [target_navigable, window_type] = source_document.navigable()->choose_a_navigable(target, no_opener, ActivateTab::Yes, tokenized_features);
 
     // 11. If targetNavigable is null, then return null.
     if (target_navigable == nullptr)
@@ -377,8 +202,8 @@ WebIDL::ExceptionOr<JS::GCPtr<WindowProxy>> Window::open_impl(StringView url, St
         // 1. Set the target browsing context's is popup to the result of checking if a popup window is requested, given tokenizedFeatures.
         target_navigable->set_is_popup(check_if_a_popup_window_is_requested(tokenized_features));
 
-        // FIXME: 2. Set up browsing context features for target browsing context given tokenizedFeatures. [CSSOMVIEW]
-        // NOTE: While this is not implemented yet, all of observable actions taken by this operation are optional (implementation-defined).
+        // 2. Set up browsing context features for target browsing context given tokenizedFeatures. [CSSOMVIEW]
+        // NOTE: This is implemented in choose_a_navigable when creating the top level traversable.
 
         // 3. Let urlRecord be the URL record about:blank.
         auto url_record = URL::URL("about:blank"sv);
@@ -594,6 +419,21 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Storage>> Window::session_storage()
     return JS::NonnullGCPtr { *storage };
 }
 
+// https://html.spec.whatwg.org/multipage/interaction.html#sticky-activation
+bool Window::has_sticky_activation() const
+{
+    // When the current high resolution time given W
+    auto current_time = HighResolutionTime::current_high_resolution_time(*this);
+
+    // is greater than or equal to the last activation timestamp in W
+    if (current_time >= m_last_activation_timestamp) {
+        // W is said to have sticky activation.
+        return true;
+    }
+
+    return false;
+}
+
 // https://html.spec.whatwg.org/multipage/interaction.html#transient-activation
 bool Window::has_transient_activation() const
 {
@@ -614,6 +454,65 @@ bool Window::has_transient_activation() const
     }
 
     return false;
+}
+
+// https://html.spec.whatwg.org/multipage/interaction.html#history-action-activation
+bool Window::has_history_action_activation() const
+{
+    // When the last history-action activation timestamp of W is not equal to the last activation timestamp of W, then W is said to have history-action activation.
+    return m_last_history_action_activation_timestamp != m_last_activation_timestamp;
+}
+
+// https://html.spec.whatwg.org/multipage/interaction.html#consume-history-action-user-activation
+void Window::consume_history_action_user_activation()
+{
+    auto navigable = this->navigable();
+
+    // 1. If W's navigable is null, then return.
+    if (navigable == nullptr)
+        return;
+
+    // 2. Let top be W's navigable's top-level traversable.
+    auto top = navigable->top_level_traversable();
+
+    // 3. Let navigables be the inclusive descendant navigables of top's active document.
+    auto navigables = top->active_document()->inclusive_descendant_navigables();
+
+    // 4. Let windows be the list of Window objects constructed by taking the active window of each item in navigables.
+    JS::MarkedVector<JS::GCPtr<Window>> windows(heap());
+    for (auto& n : navigables)
+        windows.append(n->active_window());
+
+    // 5. For each window in windows, set window's last history-action activation timestamp to window's last activation timestamp.
+    for (auto& window : windows)
+        window->set_last_history_action_activation_timestamp(window->last_activation_timestamp());
+}
+
+// https://html.spec.whatwg.org/multipage/interaction.html#consume-user-activation
+void Window::consume_user_activation()
+{
+    auto navigable = this->navigable();
+
+    // 1. If W's navigable is null, then return.
+    if (navigable == nullptr)
+        return;
+
+    // 2. Let top be W's navigable's top-level traversable.
+    auto top = navigable->top_level_traversable();
+
+    // 3. Let navigables be the inclusive descendant navigables of top's active document.
+    auto navigables = top->active_document()->inclusive_descendant_navigables();
+
+    // 4. Let windows be the list of Window objects constructed by taking the active window of each item in navigables.
+    JS::MarkedVector<JS::GCPtr<Window>> windows(heap());
+    for (auto& n : navigables)
+        windows.append(n->active_window());
+
+    // 5. For each window in windows, if window's last activation timestamp is not positive infinity, then set window's last activation timestamp to negative infinity.
+    for (auto& window : windows) {
+        if (window->last_activation_timestamp() != AK::Infinity<HighResolutionTime::DOMHighResTimeStamp>)
+            window->set_last_activation_timestamp(-AK::Infinity<HighResolutionTime::DOMHighResTimeStamp>);
+    }
 }
 
 // https://w3c.github.io/requestidlecallback/#start-an-idle-period-algorithm
@@ -1058,6 +957,16 @@ JS::NonnullGCPtr<Navigator> Window::navigator()
     return JS::NonnullGCPtr { *m_navigator };
 }
 
+// https://html.spec.whatwg.org/multipage/interaction.html#close-watcher-manager
+JS::NonnullGCPtr<CloseWatcherManager> Window::close_watcher_manager()
+{
+    auto& realm = this->realm();
+
+    if (!m_close_watcher_manager)
+        m_close_watcher_manager = heap().allocate<CloseWatcherManager>(realm, realm);
+    return JS::NonnullGCPtr { *m_close_watcher_manager };
+}
+
 // https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
 void Window::alert(String const& message)
 {
@@ -1160,10 +1069,10 @@ WebIDL::ExceptionOr<void> Window::window_post_message_steps(JS::Value message, W
         // 6. Let newPorts be a new frozen array consisting of all MessagePort objects in deserializeRecord.[[TransferredValues]],
         //    if any, maintaining their relative order.
         // FIXME: Use a FrozenArray
-        Vector<JS::Handle<JS::Object>> new_ports;
+        Vector<JS::Handle<MessagePort>> new_ports;
         for (auto const& object : deserialize_record.transferred_values) {
             if (is<HTML::MessagePort>(*object)) {
-                new_ports.append(object);
+                new_ports.append(verify_cast<MessagePort>(*object));
             }
         }
 
@@ -1368,8 +1277,8 @@ void Window::scroll(ScrollToOptions const& options)
     auto y = options.top.value_or(viewport_rect.y());
 
     // 3. Normalize non-finite values for x and y.
-    x = JS::Value(x).is_finite_number() ? x : 0;
-    y = JS::Value(y).is_finite_number() ? y : 0;
+    x = HTML::normalize_non_finite_values(x);
+    y = HTML::normalize_non_finite_values(y);
 
     // 5. Let viewport width be the width of the viewport excluding the width of the scroll bar, if any.
     auto viewport_width = viewport_rect.width();
@@ -1438,16 +1347,14 @@ void Window::scroll(double x, double y)
 void Window::scroll_by(ScrollToOptions options)
 {
     // 2. Normalize non-finite values for the left and top dictionary members of options.
-    auto x = options.left.value_or(0);
-    auto y = options.top.value_or(0);
-    x = JS::Value(x).is_finite_number() ? x : 0;
-    y = JS::Value(y).is_finite_number() ? y : 0;
+    auto left = HTML::normalize_non_finite_values(options.left);
+    auto top = HTML::normalize_non_finite_values(options.top);
 
     // 3. Add the value of scrollX to the left dictionary member.
-    options.left = x + scroll_x();
+    options.left = left + scroll_x();
 
     // 4. Add the value of scrollY to the top dictionary member.
-    options.top = y + scroll_y();
+    options.top = top + scroll_y();
 
     // 5. Act as if the scroll() method was invoked with options as the only argument.
     scroll(options);
@@ -1698,14 +1605,14 @@ Vector<FlyString> Window::supported_property_names() const
     //   that have a non-empty name content attribute and are in a document tree with window's associated Document as their root; and
     // - the value of the id content attribute for all HTML elements that have a non-empty id content attribute
     //   and are in a document tree with window's associated Document as their root.
-    associated_document().for_each_in_subtree_of_type<DOM::Element>([&property_names](auto& element) -> IterationDecision {
+    associated_document().for_each_in_subtree_of_type<DOM::Element>([&property_names](auto& element) -> TraversalDecision {
         if (is<HTMLEmbedElement>(element) || is<HTMLFormElement>(element) || is<HTMLImageElement>(element) || is<HTMLObjectElement>(element)) {
             if (element.name().has_value())
                 property_names.set(element.name().value(), AK::HashSetExistingEntryBehavior::Keep);
         }
         if (auto const& name = element.id(); name.has_value())
             property_names.set(name.value().to_string(), AK::HashSetExistingEntryBehavior::Keep);
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     });
 
     return property_names.values();
@@ -1729,12 +1636,12 @@ WebIDL::ExceptionOr<JS::Value> Window::named_item_value(FlyString const& name) c
         JS::GCPtr<NavigableContainer> container = nullptr;
         mutable_this.associated_document().for_each_in_subtree_of_type<HTML::NavigableContainer>([&](HTML::NavigableContainer& navigable_container) {
             if (!navigable_container.content_navigable())
-                return IterationDecision::Continue;
+                return TraversalDecision::Continue;
             if (objects.navigables.contains_slow(JS::NonnullGCPtr { *navigable_container.content_navigable() })) {
                 container = navigable_container;
-                return IterationDecision::Break;
+                return TraversalDecision::Break;
             }
-            return IterationDecision::Continue;
+            return TraversalDecision::Continue;
         });
         // 2. Return container's content navigable's active WindowProxy.
         VERIFY(container);
@@ -1775,13 +1682,13 @@ Window::NamedObjects Window::named_objects(StringView name)
     // embed, form, img, or object elements that have a name content attribute whose value is name
     // and are in a document tree with window's associated Document as their root; and
     // HTML elements that have an id content attribute whose value is name and are in a document tree with window's associated Document as their root.
-    associated_document().for_each_in_subtree_of_type<DOM::Element>([&objects, &name](auto& element) -> IterationDecision {
+    associated_document().for_each_in_subtree_of_type<DOM::Element>([&objects, &name](auto& element) -> TraversalDecision {
         if ((is<HTMLEmbedElement>(element) || is<HTMLFormElement>(element) || is<HTMLImageElement>(element) || is<HTMLObjectElement>(element))
             && (element.name() == name))
             objects.elements.append(element);
         else if (element.id() == name)
             objects.elements.append(element);
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     });
 
     return objects;

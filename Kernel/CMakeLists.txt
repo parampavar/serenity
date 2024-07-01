@@ -48,11 +48,8 @@ set(KERNEL_SOURCES
     Bus/VirtIO/Transport/PCIe/TransportLink.cpp
     Bus/VirtIO/Transport/Entity.cpp
     Bus/VirtIO/Transport/InterruptHandler.cpp
-    Bus/VirtIO/Console.cpp
-    Bus/VirtIO/ConsolePort.cpp
     Bus/VirtIO/Device.cpp
     Bus/VirtIO/Queue.cpp
-    Bus/VirtIO/RNG.cpp
     Devices/AsyncDeviceRequest.cpp
     Devices/Audio/AC97/AC97.cpp
     Devices/Audio/Channel.cpp
@@ -66,6 +63,7 @@ set(KERNEL_SOURCES
     Devices/CharacterDevice.cpp
     Devices/Device.cpp
     Devices/DeviceManagement.cpp
+    Devices/FUSEDevice.cpp
     Devices/PCISerialDevice.cpp
     Devices/SerialDevice.cpp
     Devices/HID/AllMiceDevice.cpp
@@ -75,6 +73,7 @@ set(KERNEL_SOURCES
     Devices/HID/PS2/KeyboardDevice.cpp
     Devices/HID/PS2/MouseDevice.cpp
     Devices/HID/USB/MouseDevice.cpp
+    Devices/HID/VirtIO/Input.cpp
     Devices/Generic/ConsoleDevice.cpp
     Devices/Generic/DeviceControlDevice.cpp
     Devices/Generic/FullDevice.cpp
@@ -91,7 +90,6 @@ set(KERNEL_SOURCES
     Devices/GPU/Console/BootFramebufferConsole.cpp
     Devices/GPU/Console/GenericFramebufferConsole.cpp
     Devices/GPU/Console/ContiguousFramebufferConsole.cpp
-    Devices/GPU/Console/VGATextModeConsole.cpp
     Devices/GPU/DisplayConnector.cpp
     Devices/GPU/Generic/DisplayConnector.cpp
     Devices/GPU/Management.cpp
@@ -112,15 +110,13 @@ set(KERNEL_SOURCES
     Devices/GPU/VirtIO/GPU3DDevice.cpp
     Devices/GPU/VirtIO/GraphicsAdapter.cpp
     Devices/Loop/LoopDevice.cpp
-    Devices/Storage/ATA/AHCI/Controller.cpp
-    Devices/Storage/ATA/AHCI/Port.cpp
-    Devices/Storage/ATA/AHCI/InterruptHandler.cpp
-    Devices/Storage/ATA/GenericIDE/Controller.cpp
-    Devices/Storage/ATA/GenericIDE/Channel.cpp
-    Devices/Storage/ATA/ATAController.cpp
-    Devices/Storage/ATA/ATADevice.cpp
-    Devices/Storage/ATA/ATADiskDevice.cpp
-    Devices/Storage/ATA/ATAPort.cpp
+    Devices/Serial/VirtIO/Console.cpp
+    Devices/Serial/VirtIO/ConsolePort.cpp
+    Devices/Storage/AHCI/ATADevice.cpp
+    Devices/Storage/AHCI/ATADiskDevice.cpp
+    Devices/Storage/AHCI/Controller.cpp
+    Devices/Storage/AHCI/InterruptHandler.cpp
+    Devices/Storage/AHCI/Port.cpp
     Devices/Storage/NVMe/NVMeController.cpp
     Devices/Storage/NVMe/NVMeNameSpace.cpp
     Devices/Storage/NVMe/NVMeInterruptQueue.cpp
@@ -130,6 +126,8 @@ set(KERNEL_SOURCES
     Devices/Storage/SD/SDHostController.cpp
     Devices/Storage/SD/SDMemoryCard.cpp
     Devices/Storage/USB/BulkSCSIInterface.cpp
+    Devices/Storage/VirtIO/VirtIOBlockController.cpp
+    Devices/Storage/VirtIO/VirtIOBlockDevice.cpp
     Devices/Storage/StorageController.cpp
     Devices/Storage/StorageDevice.cpp
     Devices/Storage/StorageManagement.cpp
@@ -137,6 +135,7 @@ set(KERNEL_SOURCES
     FileSystem/AnonymousFile.cpp
     FileSystem/BlockBasedFileSystem.cpp
     FileSystem/Custody.cpp
+    FileSystem/CustodyBase.cpp
     FileSystem/DevLoopFS/FileSystem.cpp
     FileSystem/DevLoopFS/Inode.cpp
     FileSystem/DevPtsFS/FileSystem.cpp
@@ -149,6 +148,8 @@ set(KERNEL_SOURCES
     FileSystem/File.cpp
     FileSystem/FileBackedFileSystem.cpp
     FileSystem/FileSystem.cpp
+    FileSystem/FUSE/FileSystem.cpp
+    FileSystem/FUSE/Inode.cpp
     FileSystem/Inode.cpp
     FileSystem/InodeFile.cpp
     FileSystem/InodeMetadata.cpp
@@ -239,7 +240,8 @@ set(KERNEL_SOURCES
     Memory/AnonymousVMObject.cpp
     Memory/InodeVMObject.cpp
     Memory/MemoryManager.cpp
-    Memory/PhysicalPage.cpp
+    Memory/MMIOVMObject.cpp
+    Memory/PhysicalRAMPage.cpp
     Memory/PhysicalRegion.cpp
     Memory/PhysicalZone.cpp
     Memory/PrivateInodeVMObject.cpp
@@ -278,6 +280,7 @@ set(KERNEL_SOURCES
     Net/Socket.cpp
     Net/TCPSocket.cpp
     Net/UDPSocket.cpp
+    Security/Random/VirtIO/RNG.cpp
     Security/AddressSanitizer.cpp
     Security/Credentials.cpp
     Security/Random.cpp
@@ -416,14 +419,13 @@ if ("${SERENITY_ARCH}" STREQUAL "x86_64")
 
         Arch/x86_64/ISABus/HID/VMWareMouseDevice.cpp
         Arch/x86_64/ISABus/I8042Controller.cpp
-        Arch/x86_64/ISABus/IDEController.cpp
         Arch/x86_64/ISABus/SerialDevice.cpp
-        Arch/x86_64/PCI/Controller/HostBridge.cpp
-        Arch/x86_64/PCI/IDELegacyModeController.cpp
+        Arch/x86_64/PCI/Controller/PIIX4HostBridge.cpp
         Arch/x86_64/PCI/Initializer.cpp
         Arch/x86_64/PCI/MSI.cpp
 
         Arch/x86_64/VGA/IOArbiter.cpp
+        Arch/x86_64/VGA/TextModeConsole.cpp
 
         Arch/x86_64/PowerState.cpp
         Arch/x86_64/RTC.cpp
@@ -795,9 +797,11 @@ add_link_options(LINKER:-z,notext)
 
 add_library(kernel_heap STATIC ${KERNEL_HEAP_SOURCES})
 add_dependencies(kernel_heap install_libc_headers)
+target_link_libraries(kernel_heap PUBLIC GenericClangPlugin)
 
 add_executable(Kernel ${SOURCES})
 add_dependencies(Kernel generate_EscapeSequenceStateMachine.h generate_version_header install_libc_headers)
+target_link_libraries(Kernel PUBLIC GenericClangPlugin)
 
 if("${SERENITY_ARCH}" STREQUAL "aarch64")
     target_link_options(Kernel PRIVATE LINKER:-T ${CMAKE_CURRENT_SOURCE_DIR}/Arch/aarch64/linker.ld -nostdlib LINKER:--no-pie)
@@ -843,7 +847,25 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang$")
     target_link_libraries(Kernel PRIVATE kernel_heap clang_rt.builtins)
 endif()
 
-add_custom_command(
+if ("${SERENITY_ARCH}" STREQUAL "x86_64")
+    set(KERNEL_ELF_OBJCOPY_TARGET "elf64-x86-64")
+endif()
+
+# In x86_64 the Kernel is linked to the Pre-kernel binary.
+if ("${SERENITY_ARCH}" STREQUAL "x86_64")
+    add_custom_command(
+        TARGET Kernel POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E env NM=${CMAKE_NM} sh ${CMAKE_CURRENT_SOURCE_DIR}/mkmap.sh
+        COMMAND ${CMAKE_COMMAND} -E env OBJCOPY=${CMAKE_OBJCOPY} sh ${CMAKE_CURRENT_SOURCE_DIR}/embedmap.sh
+        COMMAND ${CMAKE_OBJCOPY} --only-keep-debug Kernel Kernel.debug
+        COMMAND ${CMAKE_OBJCOPY} --strip-debug Kernel
+        COMMAND ${CMAKE_OBJCOPY} --add-gnu-debuglink=Kernel.debug Kernel
+        COMMAND ${CMAKE_OBJCOPY} --set-section-flags .heap=load Kernel Kernel_shared_object
+        COMMAND ${CMAKE_OBJCOPY} -I binary -O ${KERNEL_ELF_OBJCOPY_TARGET} --rename-section .data=.Kernel_image --set-section-alignment .Kernel_image=4096 Kernel_shared_object Kernel.o
+        BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/Kernel.o ${CMAKE_CURRENT_BINARY_DIR}/kernel.map
+    )
+elseif ("${SERENITY_ARCH}" STREQUAL "aarch64" OR "${SERENITY_ARCH}" STREQUAL "riscv64")
+    add_custom_command(
         TARGET Kernel POST_BUILD
         COMMAND "${CMAKE_COMMAND}" -E env NM=${CMAKE_NM} sh ${CMAKE_CURRENT_SOURCE_DIR}/mkmap.sh
         COMMAND "${CMAKE_COMMAND}" -E env OBJCOPY=${CMAKE_OBJCOPY} sh ${CMAKE_CURRENT_SOURCE_DIR}/embedmap.sh
@@ -851,9 +873,14 @@ add_custom_command(
         COMMAND ${CMAKE_OBJCOPY} --strip-debug Kernel
         COMMAND ${CMAKE_OBJCOPY} --add-gnu-debuglink=Kernel.debug Kernel
         BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/kernel.map
-)
+    )
+endif()
 
+# Architectures (x86_64, aarch64, riscv64) share the same location in their respective architecture build folder.
+# In x86_64 the Kernel is linked to the Pre-kernel binary and then generates the result Kernel binary.
+# In aarch64 and riscv64 there's no Pre-kernel stage yet, so we immediately get a Kernel binary.
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/Kernel" DESTINATION boot)
+
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/Kernel.debug" DESTINATION boot)
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/kernel.map" DESTINATION res)
 

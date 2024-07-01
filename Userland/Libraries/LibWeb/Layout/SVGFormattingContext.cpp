@@ -16,6 +16,7 @@
 #include <LibWeb/Layout/SVGFormattingContext.h>
 #include <LibWeb/Layout/SVGGeometryBox.h>
 #include <LibWeb/Layout/SVGMaskBox.h>
+#include <LibWeb/SVG/SVGAElement.h>
 #include <LibWeb/SVG/SVGClipPathElement.h>
 #include <LibWeb/SVG/SVGForeignObjectElement.h>
 #include <LibWeb/SVG/SVGGElement.h>
@@ -154,6 +155,8 @@ static bool is_container_element(Node const& node)
     auto* dom_node = node.dom_node();
     if (!dom_node)
         return false;
+    if (is<SVG::SVGAElement>(dom_node))
+        return true;
     if (is<SVG::SVGUseElement>(dom_node))
         return true;
     if (is<SVG::SVGSymbolElement>(dom_node))
@@ -250,6 +253,7 @@ void SVGFormattingContext::run(Box const& box, LayoutMode, AvailableSpace const&
 
     box.for_each_child_of_type<Box>([&](Box const& child) {
         layout_svg_element(child);
+        return IterationDecision::Continue;
     });
 }
 
@@ -264,6 +268,7 @@ void SVGFormattingContext::layout_svg_element(Box const& child)
         child_state.set_content_offset(child_state.offset.translated(m_svg_offset));
         child.for_each_child_of_type<SVGMaskBox>([&](SVGMaskBox const& child) {
             layout_svg_element(child);
+            return IterationDecision::Continue;
         });
     } else if (is<SVGGraphicsBox>(child)) {
         layout_graphics_element(static_cast<SVGGraphicsBox const&>(child));
@@ -369,6 +374,7 @@ void SVGFormattingContext::layout_path_like_element(SVGGraphicsBox const& graphi
         text_box.for_each_child_of_type<SVGGraphicsBox>([&](auto& child) {
             if (is<SVGTextBox>(child) || is<SVGTextPathBox>(child))
                 layout_graphics_element(child);
+            return IterationDecision::Continue;
         });
     } else if (is<SVGTextPathBox>(graphics_box)) {
         // FIXME: Support <tspan> in <textPath>.
@@ -446,11 +452,12 @@ void SVGFormattingContext::layout_container_element(SVGBox const& container)
     container.for_each_child_of_type<Box>([&](Box const& child) {
         // Masks/clips do not change the bounding box of their parents.
         if (is<SVGMaskBox>(child) || is<SVGClipBox>(child))
-            return;
+            return IterationDecision::Continue;
         layout_svg_element(child);
         auto& child_state = m_state.get(child);
         bounding_box.add_point(child_state.offset);
         bounding_box.add_point(child_state.offset.translated(child_state.content_width(), child_state.content_height()));
+        return IterationDecision::Continue;
     });
     box_state.set_content_x(bounding_box.x());
     box_state.set_content_y(bounding_box.y());

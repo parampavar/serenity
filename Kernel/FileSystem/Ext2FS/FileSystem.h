@@ -103,15 +103,7 @@ private:
     void uncache_inode(InodeIndex);
     ErrorOr<void> free_inode(Ext2FSInode&);
 
-    struct BlockListShape {
-        unsigned direct_blocks { 0 };
-        unsigned indirect_blocks { 0 };
-        unsigned doubly_indirect_blocks { 0 };
-        unsigned triply_indirect_blocks { 0 };
-        unsigned meta_blocks { 0 };
-    };
-
-    BlockListShape compute_block_list_shape(unsigned blocks) const;
+    using BlockList = HashMap<BlockBasedFileSystem::BlockIndex, BlockBasedFileSystem::BlockIndex>;
 
     u64 m_block_group_count { 0 };
 

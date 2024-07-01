@@ -30,9 +30,25 @@ public:
     static WebIDL::ExceptionOr<JS::NonnullGCPtr<OscillatorNode>> create(JS::Realm&, JS::NonnullGCPtr<BaseAudioContext>, OscillatorOptions const& = {});
     static WebIDL::ExceptionOr<JS::NonnullGCPtr<OscillatorNode>> construct_impl(JS::Realm&, JS::NonnullGCPtr<BaseAudioContext>, OscillatorOptions const& = {});
 
+    Bindings::OscillatorType type() const;
+    WebIDL::ExceptionOr<void> set_type(Bindings::OscillatorType);
+
+    JS::NonnullGCPtr<AudioParam const> frequency() const { return m_frequency; }
+
 protected:
+    OscillatorNode(JS::Realm&, JS::NonnullGCPtr<BaseAudioContext>, OscillatorOptions const& = {});
+
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
+
+private:
+    static WebIDL::ExceptionOr<void> verify_valid_type(JS::Realm&, Bindings::OscillatorType);
+
+    // https://webaudio.github.io/web-audio-api/#dom-oscillatornode-type
+    Bindings::OscillatorType m_type { Bindings::OscillatorType::Sine };
+
+    // https://webaudio.github.io/web-audio-api/#dom-oscillatornode-frequency
+    JS::NonnullGCPtr<AudioParam> m_frequency;
 };
 
 }

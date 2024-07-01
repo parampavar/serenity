@@ -712,9 +712,17 @@
     ],
     "__comment": "FIXME: This should be a <clip-source> | [ <basic-shape> || <geometry-box> ]",
     "valid-types": [
+      "basic-shape",
       "url"
     ],
     "initial": "none"
+  },
+  "clip-rule": {
+    "affects-layout": false,
+    "animation-type": "discrete",
+    "inherited": true,
+    "initial": "nonzero",
+    "valid-types": [ "fill-rule" ]
   },
   "color": {
     "affects-layout": false,
@@ -857,10 +865,7 @@
     "animation-type": "discrete",
     "inherited": true,
     "initial": "nonzero",
-    "valid-identifiers": [
-      "nonzero",
-      "evenodd"
-    ]
+    "valid-types": [ "fill-rule" ]
   },
   "flex": {
     "inherited": false,
@@ -884,7 +889,10 @@
     ],
     "valid-identifiers": [
       "auto",
-      "content"
+      "content",
+      "fit-content",
+      "max-content",
+      "min-content"
     ],
     "percentages-resolve-to": "length"
   },

@@ -24,6 +24,7 @@ namespace Web::HTML::EventNames {
     __ENUMERATE_HTML_EVENT(afterprint)               \
     __ENUMERATE_HTML_EVENT(beforeprint)              \
     __ENUMERATE_HTML_EVENT(beforeunload)             \
+    __ENUMERATE_HTML_EVENT(blocked)                  \
     __ENUMERATE_HTML_EVENT(blur)                     \
     __ENUMERATE_HTML_EVENT(cancel)                   \
     __ENUMERATE_HTML_EVENT(canplay)                  \
@@ -65,6 +66,9 @@ namespace Web::HTML::EventNames {
     __ENUMERATE_HTML_EVENT(loadend)                  \
     __ENUMERATE_HTML_EVENT(loadeddata)               \
     __ENUMERATE_HTML_EVENT(loadedmetadata)           \
+    __ENUMERATE_HTML_EVENT(loading)                  \
+    __ENUMERATE_HTML_EVENT(loadingdone)              \
+    __ENUMERATE_HTML_EVENT(loadingerror)             \
     __ENUMERATE_HTML_EVENT(loadstart)                \
     __ENUMERATE_HTML_EVENT(message)                  \
     __ENUMERATE_HTML_EVENT(messageerror)             \
@@ -101,12 +105,14 @@ namespace Web::HTML::EventNames {
     __ENUMERATE_HTML_EVENT(statechange)              \
     __ENUMERATE_HTML_EVENT(storage)                  \
     __ENUMERATE_HTML_EVENT(submit)                   \
+    __ENUMERATE_HTML_EVENT(success)                  \
     __ENUMERATE_HTML_EVENT(suspend)                  \
     __ENUMERATE_HTML_EVENT(timeupdate)               \
     __ENUMERATE_HTML_EVENT(toggle)                   \
     __ENUMERATE_HTML_EVENT(transitionend)            \
     __ENUMERATE_HTML_EVENT(unhandledrejection)       \
     __ENUMERATE_HTML_EVENT(unload)                   \
+    __ENUMERATE_HTML_EVENT(upgradeneeded)            \
     __ENUMERATE_HTML_EVENT(visibilitychange)         \
     __ENUMERATE_HTML_EVENT(volumechange)             \
     __ENUMERATE_HTML_EVENT(waiting)                  \

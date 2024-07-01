@@ -32,11 +32,11 @@
 #include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/SelectedFile.h>
 #include <LibWeb/HTML/SharedImageRequest.h>
+#include <LibWeb/HTML/ValidityState.h>
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/Infra/CharacterTypes.h>
 #include <LibWeb/Infra/Strings.h>
 #include <LibWeb/Layout/BlockContainer.h>
-#include <LibWeb/Layout/ButtonBox.h>
 #include <LibWeb/Layout/CheckBox.h>
 #include <LibWeb/Layout/ImageBox.h>
 #include <LibWeb/Layout/RadioButton.h>
@@ -82,13 +82,24 @@ void HTMLInputElement::visit_edges(Cell::Visitor& visitor)
     visitor.visit(m_image_request);
 }
 
+// https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#dom-cva-validity
+JS::NonnullGCPtr<ValidityState const> HTMLInputElement::validity() const
+{
+    auto& vm = this->vm();
+    auto& realm = this->realm();
+
+    dbgln("FIXME: Implement validity attribute getter");
+
+    return vm.heap().allocate<ValidityState>(realm, realm);
+}
+
 JS::GCPtr<Layout::Node> HTMLInputElement::create_layout_node(NonnullRefPtr<CSS::StyleProperties> style)
 {
     if (type_state() == TypeAttributeState::Hidden)
         return nullptr;
 
     if (type_state() == TypeAttributeState::SubmitButton || type_state() == TypeAttributeState::Button || type_state() == TypeAttributeState::ResetButton)
-        return heap().allocate_without_realm<Layout::ButtonBox>(document(), *this, move(style));
+        return heap().allocate_without_realm<Layout::BlockContainer>(document(), this, move(style));
 
     if (type_state() == TypeAttributeState::ImageButton)
         return heap().allocate_without_realm<Layout::ImageBox>(document(), *this, move(style), *this);
@@ -135,6 +146,7 @@ void HTMLInputElement::set_checked(bool checked, ChangeSource change_source)
     if (parent()) {
         parent()->for_each_child([&](auto& child) {
             child.invalidate_style();
+            return IterationDecision::Continue;
         });
     }
 }
@@ -247,14 +259,20 @@ static void show_the_picker_if_applicable(HTMLInputElement& element)
 
     // 1. If element's relevant global object does not have transient activation, then return.
     auto& global_object = relevant_global_object(element);
-    if (!is<HTML::Window>(global_object) || !static_cast<HTML::Window&>(global_object).has_transient_activation())
+    if (!is<HTML::Window>(global_object))
+        return;
+    auto& relevant_global_object = static_cast<HTML::Window&>(global_object);
+    if (!relevant_global_object.has_transient_activation())
         return;
 
     // 2. If element is not mutable, then return.
     if (!element.is_mutable())
         return;
 
-    // 3. If element's type attribute is in the File Upload state, then run these steps in parallel:
+    // 3. Consume user activation given element's relevant global object.
+    relevant_global_object.consume_user_activation();
+
+    // 4. If element's type attribute is in the File Upload state, then run these steps in parallel:
     if (element.type_state() == HTMLInputElement::TypeAttributeState::FileUpload) {
         // NOTE: These steps cannot be fully implemented here, and must be done in the PageClient when the response comes back from the PageHost
 
@@ -276,7 +294,7 @@ static void show_the_picker_if_applicable(HTMLInputElement& element)
         return;
     }
 
-    // 4. Otherwise, the user agent should show any relevant user interface for selecting a value for element,
+    // 5. Otherwise, the user agent should show any relevant user interface for selecting a value for element,
     //    in the way it normally would when the user interacts with the control. (If no such UI applies to element, then this step does nothing.)
     //    If such a user interface is shown, it must respect the requirements stated in the relevant parts of the specification for how element
     //    behaves given its type attribute state. (For example, various sections describe restrictions on the resulting value string.)
@@ -714,16 +732,19 @@ Optional<String> HTMLInputElement::placeholder_value() const
 
 void HTMLInputElement::create_shadow_tree_if_needed()
 {
-    if (shadow_root_internal())
+    if (shadow_root())
         return;
 
     switch (type_state()) {
     case TypeAttributeState::Hidden:
     case TypeAttributeState::RadioButton:
     case TypeAttributeState::Checkbox:
+        break;
     case TypeAttributeState::Button:
     case TypeAttributeState::SubmitButton:
     case TypeAttributeState::ResetButton:
+        create_button_input_shadow_tree();
+        break;
     case TypeAttributeState::ImageButton:
         break;
     case TypeAttributeState::Color:
@@ -758,6 +779,15 @@ void HTMLInputElement::update_shadow_tree()
         update_text_input_shadow_tree();
         break;
     }
+}
+
+void HTMLInputElement::create_button_input_shadow_tree()
+{
+    auto shadow_root = heap().allocate<DOM::ShadowRoot>(realm(), document(), *this, Bindings::ShadowRootMode::Closed);
+    set_shadow_root(shadow_root);
+
+    m_text_node = heap().allocate<DOM::Text>(realm(), document(), value());
+    MUST(shadow_root->append_child(*m_text_node));
 }
 
 void HTMLInputElement::create_text_input_shadow_tree()
@@ -1397,7 +1427,7 @@ void HTMLInputElement::set_checked_within_group()
     document().for_each_in_inclusive_subtree_of_type<HTML::HTMLInputElement>([&](auto& element) {
         if (element.checked() && &element != this && is_in_same_radio_button_group(*this, element))
             element.set_checked(false, ChangeSource::User);
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     });
 }
 
@@ -1424,9 +1454,9 @@ void HTMLInputElement::legacy_pre_activation_behavior()
         document().for_each_in_inclusive_subtree_of_type<HTML::HTMLInputElement>([&](auto& element) {
             if (element.checked() && is_in_same_radio_button_group(*this, element)) {
                 m_legacy_pre_activation_behavior_checked_element_in_group = &element;
-                return IterationDecision::Break;
+                return TraversalDecision::Break;
             }
-            return IterationDecision::Continue;
+            return TraversalDecision::Continue;
         });
 
         set_checked_within_group();

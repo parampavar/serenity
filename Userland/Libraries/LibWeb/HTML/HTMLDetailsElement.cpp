@@ -119,7 +119,7 @@ void HTMLDetailsElement::queue_a_details_toggle_event_task(String old_state, Str
 // https://html.spec.whatwg.org/#the-details-and-summary-elements
 WebIDL::ExceptionOr<void> HTMLDetailsElement::create_shadow_tree_if_needed()
 {
-    if (shadow_root_internal())
+    if (shadow_root())
         return {};
 
     auto& realm = this->realm();
@@ -145,7 +145,7 @@ WebIDL::ExceptionOr<void> HTMLDetailsElement::create_shadow_tree_if_needed()
 
 void HTMLDetailsElement::update_shadow_tree_slots()
 {
-    if (!shadow_root_internal())
+    if (!shadow_root())
         return;
 
     Vector<HTMLSlotElement::SlottableHandle> summary_assignment;
@@ -157,15 +157,15 @@ void HTMLDetailsElement::update_shadow_tree_slots()
 
     for_each_in_subtree([&](auto& child) {
         if (&child == summary)
-            return IterationDecision::Continue;
+            return TraversalDecision::Continue;
         if (!child.is_slottable())
-            return IterationDecision::Continue;
+            return TraversalDecision::Continue;
 
         child.as_slottable().visit([&](auto& node) {
             descendants_assignment.append(JS::make_handle(node));
         });
 
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     });
 
     m_summary_slot->assign(move(summary_assignment));
@@ -177,7 +177,7 @@ void HTMLDetailsElement::update_shadow_tree_slots()
 // https://html.spec.whatwg.org/#the-details-and-summary-elements:the-details-element-6
 void HTMLDetailsElement::update_shadow_tree_style()
 {
-    if (!shadow_root_internal())
+    if (!shadow_root())
         return;
 
     if (has_attribute(HTML::AttributeNames::open)) {

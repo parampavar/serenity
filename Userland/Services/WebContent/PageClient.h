@@ -29,7 +29,10 @@ class PageClient final : public Web::PageClient {
 public:
     static JS::NonnullGCPtr<PageClient> create(JS::VM& vm, PageHost& page_host, u64 id);
 
+    virtual ~PageClient() override;
+
     static void set_use_gpu_painter();
+    static void set_use_experimental_cpu_transform_support();
 
     virtual void schedule_repaint() override;
     virtual bool is_ready_to_paint() const override;
@@ -39,6 +42,7 @@ public:
 
     ErrorOr<void> connect_to_webdriver(ByteString const& webdriver_ipc_path);
 
+    virtual void paint_next_frame() override;
     virtual void paint(Web::DevicePixelRect const& content_rect, Gfx::Bitmap&, Web::PaintOptions = {}) override;
 
     void set_palette_impl(Gfx::PaletteImpl&);
@@ -177,7 +181,6 @@ private:
     };
 
     PaintState m_paint_state { PaintState::Ready };
-    RefPtr<Web::Platform::Timer> m_repaint_timer;
 
     Web::CSS::PreferredColorScheme m_preferred_color_scheme { Web::CSS::PreferredColorScheme::Auto };
 

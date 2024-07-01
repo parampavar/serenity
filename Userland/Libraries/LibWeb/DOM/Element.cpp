@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2024, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2022-2023, San Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -23,11 +23,11 @@
 #include <LibWeb/DOM/DOMTokenList.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Element.h>
+#include <LibWeb/DOM/ElementFactory.h>
 #include <LibWeb/DOM/HTMLCollection.h>
 #include <LibWeb/DOM/NamedNodeMap.h>
 #include <LibWeb/DOM/ShadowRoot.h>
 #include <LibWeb/DOM/Text.h>
-#include <LibWeb/DOMParsing/InnerHTML.h>
 #include <LibWeb/Geometry/DOMRect.h>
 #include <LibWeb/Geometry/DOMRectList.h>
 #include <LibWeb/HTML/BrowsingContext.h>
@@ -45,8 +45,10 @@
 #include <LibWeb/HTML/HTMLOptGroupElement.h>
 #include <LibWeb/HTML/HTMLOptionElement.h>
 #include <LibWeb/HTML/HTMLSelectElement.h>
+#include <LibWeb/HTML/HTMLSlotElement.h>
 #include <LibWeb/HTML/HTMLStyleElement.h>
 #include <LibWeb/HTML/HTMLTableElement.h>
+#include <LibWeb/HTML/HTMLTemplateElement.h>
 #include <LibWeb/HTML/HTMLTextAreaElement.h>
 #include <LibWeb/HTML/Numbers.h>
 #include <LibWeb/HTML/Parser/HTMLParser.h>
@@ -340,8 +342,7 @@ WebIDL::ExceptionOr<bool> Element::toggle_attribute(FlyString const& name, Optio
         return WebIDL::InvalidCharacterError::create(realm(), "Attribute name must not be empty"_fly_string);
 
     // 2. If this is in the HTML namespace and its node document is an HTML document, then set qualifiedName to qualifiedName in ASCII lowercase.
-    // FIXME: Handle the second condition, assume it is an HTML document for now.
-    bool insert_as_lowercase = namespace_uri() == Namespace::HTML;
+    bool insert_as_lowercase = namespace_uri() == Namespace::HTML && document().document_type() == Document::Type::HTML;
 
     // 3. Let attribute be the first attribute in this’s attribute list whose qualified name is qualifiedName, and null otherwise.
     auto* attribute = m_attributes->get_attribute(name);
@@ -592,25 +593,33 @@ DOMTokenList* Element::class_list()
     return m_class_list;
 }
 
-// https://dom.spec.whatwg.org/#dom-element-attachshadow
-WebIDL::ExceptionOr<JS::NonnullGCPtr<ShadowRoot>> Element::attach_shadow(ShadowRootInit init)
+// https://dom.spec.whatwg.org/#valid-shadow-host-name
+static bool is_valid_shadow_host_name(FlyString const& name)
 {
-    // 1. If this’s namespace is not the HTML namespace, then throw a "NotSupportedError" DOMException.
+    // A valid shadow host name is:
+    // - a valid custom element name
+    // - "article", "aside", "blockquote", "body", "div", "footer", "h1", "h2", "h3", "h4", "h5", "h6", "header", "main", "nav", "p", "section", or "span"
+    if (!HTML::is_valid_custom_element_name(name)
+        && !name.is_one_of("article", "aside", "blockquote", "body", "div", "footer", "h1", "h2", "h3", "h4", "h5", "h6", "header", "main", "nav", "p", "section", "span")) {
+        return false;
+    }
+    return true;
+}
+
+// https://dom.spec.whatwg.org/#concept-attach-a-shadow-root
+WebIDL::ExceptionOr<void> Element::attach_a_shadow_root(Bindings::ShadowRootMode mode, bool clonable, bool serializable, bool delegates_focus, Bindings::SlotAssignmentMode slot_assignment)
+{
+    // 1. If element’s namespace is not the HTML namespace, then throw a "NotSupportedError" DOMException.
     if (namespace_uri() != Namespace::HTML)
         return WebIDL::NotSupportedError::create(realm(), "Element's namespace is not the HTML namespace"_fly_string);
 
-    // 2. If this’s local name is not one of the following:
-    //    - a valid custom element name
-    //    - "article", "aside", "blockquote", "body", "div", "footer", "h1", "h2", "h3", "h4", "h5", "h6", "header", "main", "nav", "p", "section", or "span"
-    if (!HTML::is_valid_custom_element_name(local_name())
-        && !local_name().is_one_of("article", "aside", "blockquote", "body", "div", "footer", "h1", "h2", "h3", "h4", "h5", "h6", "header", "main", "nav", "p", "section", "span")) {
-        // then throw a "NotSupportedError" DOMException.
-        return WebIDL::NotSupportedError::create(realm(), MUST(String::formatted("Element '{}' cannot be a shadow host", local_name())));
-    }
+    // 2. If element’s local name is not a valid shadow host name, then throw a "NotSupportedError" DOMException.
+    if (!is_valid_shadow_host_name(local_name()))
+        return WebIDL::NotSupportedError::create(realm(), "Element's local name is not a valid shadow host name"_fly_string);
 
-    // 3. If this’s local name is a valid custom element name, or this’s is value is not null, then:
+    // 3. If element’s local name is a valid custom element name, or element’s is value is not null, then:
     if (HTML::is_valid_custom_element_name(local_name()) || m_is_value.has_value()) {
-        // 1. Let definition be the result of looking up a custom element definition given this’s node document, its namespace, its local name, and its is value.
+        // 1. Let definition be the result of looking up a custom element definition given element’s node document, its namespace, its local name, and its is value.
         auto definition = document().lookup_custom_element_definition(namespace_uri(), local_name(), m_is_value);
 
         // 2. If definition is not null and definition’s disable shadow is true, then throw a "NotSupportedError" DOMException.
@@ -618,32 +627,69 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<ShadowRoot>> Element::attach_shadow(ShadowR
             return WebIDL::NotSupportedError::create(realm(), "Cannot attach a shadow root to a custom element that has disabled shadow roots"_fly_string);
     }
 
-    // 4. If this is a shadow host, then throw an "NotSupportedError" DOMException.
-    if (is_shadow_host())
-        return WebIDL::NotSupportedError::create(realm(), "Element already is a shadow host"_fly_string);
+    // 4. If element is a shadow host, then:
+    if (is_shadow_host()) {
+        // 1. Let currentShadowRoot be element’s shadow root.
+        auto current_shadow_root = shadow_root();
 
-    // 5. Let shadow be a new shadow root whose node document is this’s node document, host is this, and mode is init["mode"].
-    auto shadow = heap().allocate<ShadowRoot>(realm(), document(), *this, init.mode);
+        // 2. If any of the following are true:
+        // - currentShadowRoot’s declarative is false; or
+        // - currentShadowRoot’s mode is not mode,
+        // then throw a "NotSupportedError" DOMException.
+        if (!current_shadow_root->declarative() || current_shadow_root->mode() != mode) {
+            return WebIDL::NotSupportedError::create(realm(), "Element already is a shadow host"_fly_string);
+        }
 
-    // 6. Set shadow’s delegates focus to init["delegatesFocus"].
-    shadow->set_delegates_focus(init.delegates_focus);
+        // 3. Otherwise:
+        //    1. Remove all of currentShadowRoot’s children, in tree order.
+        current_shadow_root->remove_all_children();
 
-    // 7. If this’s custom element state is "precustomized" or "custom", then set shadow’s available to element internals to true.
+        //    2. Set currentShadowRoot’s declarative to false.
+        current_shadow_root->set_declarative(false);
+
+        //    3. Return.
+        return {};
+    }
+
+    // 5. Let shadow be a new shadow root whose node document is element’s node document, host is this, and mode is mode.
+    auto shadow = heap().allocate<ShadowRoot>(realm(), document(), *this, mode);
+
+    // 6. Set shadow’s delegates focus to delegatesFocus".
+    shadow->set_delegates_focus(delegates_focus);
+
+    // 7. If element’s custom element state is "precustomized" or "custom", then set shadow’s available to element internals to true.
     if (m_custom_element_state == CustomElementState::Precustomized || m_custom_element_state == CustomElementState::Custom)
         shadow->set_available_to_element_internals(true);
 
-    // 8. Set shadow’s slot assignment to init["slotAssignment"].
-    shadow->set_slot_assignment(init.slot_assignment);
+    // 8. Set shadow’s slot assignment to slotAssignment.
+    shadow->set_slot_assignment(slot_assignment);
 
-    // 9. Set this’s shadow root to shadow.
+    // 9. Set shadow’s declarative to false.
+    shadow->set_declarative(false);
+
+    // 10. Set shadow’s clonable to clonable.
+    shadow->set_clonable(clonable);
+
+    // 11. Set shadow’s serializable to serializable.
+    shadow->set_serializable(serializable);
+
+    // 12. Set element’s shadow root to shadow.
     set_shadow_root(shadow);
+    return {};
+}
 
-    // 10. Return shadow.
-    return shadow;
+// https://dom.spec.whatwg.org/#dom-element-attachshadow
+WebIDL::ExceptionOr<JS::NonnullGCPtr<ShadowRoot>> Element::attach_shadow(ShadowRootInit init)
+{
+    // 1. Run attach a shadow root with this, init["mode"], init["clonable"], init["serializable"], init["delegatesFocus"], and init["slotAssignment"].
+    TRY(attach_a_shadow_root(init.mode, init.clonable, init.serializable, init.delegates_focus, init.slot_assignment));
+
+    // 2. Return this’s shadow root.
+    return JS::NonnullGCPtr { *shadow_root() };
 }
 
 // https://dom.spec.whatwg.org/#dom-element-shadowroot
-JS::GCPtr<ShadowRoot> Element::shadow_root() const
+JS::GCPtr<ShadowRoot> Element::shadow_root_for_bindings() const
 {
     // 1. Let shadow be this’s shadow root.
     auto shadow = m_shadow_root;
@@ -708,13 +754,38 @@ WebIDL::ExceptionOr<DOM::Element const*> Element::closest(StringView selectors) 
     return nullptr;
 }
 
-WebIDL::ExceptionOr<void> Element::set_inner_html(StringView markup)
+// https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#dom-element-innerhtml
+WebIDL::ExceptionOr<void> Element::set_inner_html(StringView value)
 {
-    TRY(DOMParsing::inner_html_setter(*this, markup));
+    // FIXME: 1. Let compliantString be the result of invoking the Get Trusted Type compliant string algorithm with TrustedHTML, this's relevant global object, the given value, "Element innerHTML", and "script".
+
+    // 2. Let context be this.
+    DOM::Node* context = this;
+
+    // 3. Let fragment be the result of invoking the fragment parsing algorithm steps with context and compliantString. FIXME: Use compliantString.
+    auto fragment = TRY(verify_cast<Element>(*context).parse_fragment(value));
+
+    // 4. If context is a template element, then set context to the template element's template contents (a DocumentFragment).
+    if (is<HTML::HTMLTemplateElement>(*context))
+        context = verify_cast<HTML::HTMLTemplateElement>(*context).content();
+
+    // 5. Replace all with fragment within context.
+    context->replace_all(fragment);
+
+    // NOTE: We don't invalidate style & layout for <template> elements since they don't affect rendering.
+    if (!is<HTML::HTMLTemplateElement>(*context)) {
+        context->set_needs_style_update(true);
+
+        if (context->is_connected()) {
+            // NOTE: Since the DOM has changed, we have to rebuild the layout tree.
+            context->document().invalidate_layout();
+        }
+    }
+
     return {};
 }
 
-// https://w3c.github.io/DOM-Parsing/#dom-innerhtml-innerhtml
+// https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#dom-element-innerhtml
 WebIDL::ExceptionOr<String> Element::inner_html() const
 {
     return serialize_fragment(DOMParsing::RequireWellFormed::Yes);
@@ -1206,8 +1277,7 @@ void Element::set_scroll_left(double x)
     // 1. Let x be the given value.
 
     // 2. Normalize non-finite values for x.
-    if (!isfinite(x))
-        x = 0.0;
+    x = HTML::normalize_non_finite_values(x);
 
     // 3. Let document be the element’s node document.
     auto& document = this->document();
@@ -1263,8 +1333,7 @@ void Element::set_scroll_top(double y)
     // 1. Let y be the given value.
 
     // 2. Normalize non-finite values for y.
-    if (!isfinite(y))
-        y = 0.0;
+    y = HTML::normalize_non_finite_values(y);
 
     // 3. Let document be the element’s node document.
     auto& document = this->document();
@@ -1418,32 +1487,82 @@ bool Element::is_actually_disabled() const
     return false;
 }
 
-// https://w3c.github.io/DOM-Parsing/#dom-element-outerhtml
+// https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#fragment-parsing-algorithm-steps
+WebIDL::ExceptionOr<JS::NonnullGCPtr<DOM::DocumentFragment>> Element::parse_fragment(StringView markup)
+{
+    // 1. Let algorithm be the HTML fragment parsing algorithm.
+    auto algorithm = HTML::HTMLParser::parse_html_fragment;
+
+    // FIXME: 2. If context's node document is an XML document, then set algorithm to the XML fragment parsing algorithm.
+    if (document().is_xml_document()) {
+        dbgln("FIXME: Handle fragment parsing of XML documents");
+    }
+
+    // 3. Let new children be the result of invoking algorithm given markup, with context set to context.
+    auto new_children = algorithm(*this, markup, HTML::HTMLParser::AllowDeclarativeShadowRoots::No);
+
+    // 4. Let fragment be a new DocumentFragment whose node document is context's node document.
+    auto fragment = realm().heap().allocate<DOM::DocumentFragment>(realm(), document());
+
+    // 5. Append each Node in new children to fragment (in tree order).
+    for (auto& child : new_children) {
+        // I don't know if this can throw here, but let's be safe.
+        (void)TRY(fragment->append_child(*child));
+    }
+
+    return fragment;
+}
+
+// https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#dom-element-outerhtml
 WebIDL::ExceptionOr<String> Element::outer_html() const
 {
     return serialize_fragment(DOMParsing::RequireWellFormed::Yes, FragmentSerializationMode::Outer);
 }
 
-// https://w3c.github.io/DOM-Parsing/#dom-element-outerhtml
-WebIDL::ExceptionOr<void> Element::set_outer_html(String const&)
+// https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#dom-element-outerhtml
+WebIDL::ExceptionOr<void> Element::set_outer_html(String const& value)
 {
-    dbgln("FIXME: Implement Element::set_outer_html()");
+    // 1. FIXME: Let compliantString be the result of invoking the Get Trusted Type compliant string algorithm with TrustedHTML, this's relevant global object, the given value, "Element outerHTML", and "script".
+
+    // 2. Let parent be this's parent.
+    auto* parent = this->parent();
+
+    // 3. If parent is null, return. There would be no way to obtain a reference to the nodes created even if the remaining steps were run.
+    if (!parent)
+        return {};
+
+    // 4. If parent is a Document, throw a "NoModificationAllowedError" DOMException.
+    if (parent->is_document())
+        return WebIDL::NoModificationAllowedError::create(realm(), "Cannot set outer HTML on document"_fly_string);
+
+    // 5. If parent is a DocumentFragment, set parent to the result of creating an element given this's node document, body, and the HTML namespace.
+    if (parent->is_document_fragment())
+        parent = TRY(create_element(document(), HTML::TagNames::body, Namespace::HTML));
+
+    // 6. Let fragment be the result of invoking the fragment parsing algorithm steps given parent and compliantString. FIXME: Use compliantString.
+    auto fragment = TRY(verify_cast<Element>(*parent).parse_fragment(value));
+
+    // 6. Replace this with fragment within this's parent.
+    TRY(parent->replace_child(fragment, *this));
+
     return {};
 }
 
-// https://w3c.github.io/DOM-Parsing/#dom-element-insertadjacenthtml
-WebIDL::ExceptionOr<void> Element::insert_adjacent_html(String const& position, String const& text)
+// https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#the-insertadjacenthtml()-method
+WebIDL::ExceptionOr<void> Element::insert_adjacent_html(String const& position, String const& string)
 {
+    // 1. Let context be null.
     JS::GCPtr<Node> context;
-    // 1. Use the first matching item from this list:
+
+    // 2. Use the first matching item from this list:
     // - If position is an ASCII case-insensitive match for the string "beforebegin"
     // - If position is an ASCII case-insensitive match for the string "afterend"
     if (Infra::is_ascii_case_insensitive_match(position, "beforebegin"sv)
         || Infra::is_ascii_case_insensitive_match(position, "afterend"sv)) {
-        // Let context be the context object's parent.
+        // 1. Set context to this's parent.
         context = this->parent();
 
-        // If context is null or a Document, throw a "NoModificationAllowedError" DOMException.
+        // 2. If context is null or a Document, throw a "NoModificationAllowedError" DOMException.
         if (!context || context->is_document())
             return WebIDL::NoModificationAllowedError::create(realm(), "insertAdjacentHTML: context is null or a Document"_fly_string);
     }
@@ -1451,7 +1570,7 @@ WebIDL::ExceptionOr<void> Element::insert_adjacent_html(String const& position, 
     // - If position is an ASCII case-insensitive match for the string "beforeend"
     else if (Infra::is_ascii_case_insensitive_match(position, "afterbegin"sv)
         || Infra::is_ascii_case_insensitive_match(position, "beforeend"sv)) {
-        // Let context be the context object.
+        // Set context to this.
         context = this;
     }
     // Otherwise
@@ -1460,7 +1579,7 @@ WebIDL::ExceptionOr<void> Element::insert_adjacent_html(String const& position, 
         return WebIDL::SyntaxError::create(realm(), "insertAdjacentHTML: invalid position argument"_fly_string);
     }
 
-    // 2. If context is not an Element or the following are all true:
+    // 3. If context is not an Element or the following are all true:
     //    - context's node document is an HTML document,
     //    - context's local name is "html", and
     //    - context's namespace is the HTML namespace;
@@ -1468,39 +1587,35 @@ WebIDL::ExceptionOr<void> Element::insert_adjacent_html(String const& position, 
         || (context->document().document_type() == Document::Type::HTML
             && static_cast<Element const&>(*context).local_name() == "html"sv
             && static_cast<Element const&>(*context).namespace_uri() == Namespace::HTML)) {
-        // FIXME: let context be a new Element with
-        //        - body as its local name,
-        //        - The HTML namespace as its namespace, and
-        //        - The context object's node document as its node document.
-        TODO();
+        context = TRY(create_element(document(), HTML::TagNames::body, Namespace::HTML));
     }
 
-    // 3. Let fragment be the result of invoking the fragment parsing algorithm with text as markup, and context as the context element.
-    auto fragment = TRY(DOMParsing::parse_fragment(text, verify_cast<Element>(*context)));
+    // 4. Let fragment be the result of invoking the fragment parsing algorithm steps with context and string.
+    auto fragment = TRY(verify_cast<Element>(*context).parse_fragment(string));
 
-    // 4. Use the first matching item from this list:
+    // 5. Use the first matching item from this list:
 
     // - If position is an ASCII case-insensitive match for the string "beforebegin"
     if (Infra::is_ascii_case_insensitive_match(position, "beforebegin"sv)) {
-        // Insert fragment into the context object's parent before the context object.
+        // Insert fragment into this's parent before this.
         parent()->insert_before(fragment, this);
     }
 
     // - If position is an ASCII case-insensitive match for the string "afterbegin"
     else if (Infra::is_ascii_case_insensitive_match(position, "afterbegin"sv)) {
-        // Insert fragment into the context object before its first child.
+        // Insert fragment into this before its first child.
         insert_before(fragment, first_child());
     }
 
     // - If position is an ASCII case-insensitive match for the string "beforeend"
     else if (Infra::is_ascii_case_insensitive_match(position, "beforeend"sv)) {
-        // Append fragment to the context object.
+        // Append fragment to this.
         TRY(append_child(fragment));
     }
 
     // - If position is an ASCII case-insensitive match for the string "afterend"
     else if (Infra::is_ascii_case_insensitive_match(position, "afterend"sv)) {
-        // Insert fragment into the context object's parent before the context object's next sibling.
+        // Insert fragment into this's parent before this's next sibling.
         parent()->insert_before(fragment, next_sibling());
     }
     return {};
@@ -1653,7 +1768,7 @@ static ErrorOr<void> scroll_an_element_into_view(DOM::Element& target, Bindings:
             }
             // 3. Otherwise, if block is "center", then align the center of target bounding border box with the center of scrolling box in scrolling box’s block flow direction.
             else if (block == Bindings::ScrollLogicalPosition::Center) {
-                TODO();
+                y = element_edge_a + (element_height / 2) - (scrolling_box_height / 2);
             }
             // 4. Otherwise, block is "nearest":
             else {
@@ -2070,12 +2185,12 @@ void Element::for_each_attribute(Function<void(FlyString const&, String const&)>
     });
 }
 
-Layout::NodeWithStyle* Element::layout_node()
+JS::GCPtr<Layout::NodeWithStyle> Element::layout_node()
 {
     return static_cast<Layout::NodeWithStyle*>(Node::layout_node());
 }
 
-Layout::NodeWithStyle const* Element::layout_node() const
+JS::GCPtr<Layout::NodeWithStyle const> Element::layout_node() const
 {
     return static_cast<Layout::NodeWithStyle const*>(Node::layout_node());
 }
@@ -2122,27 +2237,110 @@ HashMap<FlyString, CSS::StyleProperty> const& Element::custom_properties(Optiona
 // https://drafts.csswg.org/cssom-view/#dom-element-scroll
 void Element::scroll(double x, double y)
 {
-    // AD-HOC:
-    if (auto* paintable_box = this->paintable_box())
-        paintable_box->scroll_by(x, y);
+    // 1. If invoked with one argument, follow these substeps:
+    //    NOTE: Not relevant here.
+    // 2. If invoked with two arguments, follow these substeps:
+    //     1. Let options be null converted to a ScrollToOptions dictionary. [WEBIDL]
+    //     2. Let x and y be the arguments, respectively.
+    //     3. Normalize non-finite values for x and y.
+    //     4. Let the left dictionary member of options have the value x.
+    //     5. Let the top dictionary member of options have the value y.
+    x = HTML::normalize_non_finite_values(x);
+    y = HTML::normalize_non_finite_values(y);
+
+    // 3. Let document be the element’s node document.
+    auto& document = this->document();
+
+    // 4. If document is not the active document, terminate these steps.
+    if (!document.is_active())
+        return;
+
+    // 5. Let window be the value of document’s defaultView attribute.
+    auto* window = document.default_view();
+
+    // 6. If window is null, terminate these steps.
+    if (!window)
+        return;
+
+    // 7. If the element is the root element and document is in quirks mode, terminate these steps.
+    if (document.document_element() == this && document.in_quirks_mode())
+        return;
+
+    // NOTE: Ensure that layout is up-to-date before looking at metrics.
+    document.update_layout();
+
+    // 8. If the element is the root element invoke scroll() on window with scrollX on window as first argument and y as second argument, and terminate these steps.
+    if (document.document_element() == this) {
+        window->scroll(window->scroll_x(), y);
+        return;
+    }
+
+    // 9. If the element is the body element, document is in quirks mode, and the element is not potentially scrollable, invoke scroll() on window
+    //    with options as the only argument, and terminate these steps.
+    if (document.body() == this && document.in_quirks_mode() && !is_potentially_scrollable()) {
+        window->scroll(x, y);
+        return;
+    }
+
+    // 10. If the element does not have any associated box, the element has no associated scrolling box, or the element has no overflow, terminate these steps.
+    // FIXME: or the element has no overflow
+    if (!paintable_box())
+        return;
+
+    // 11. Scroll the element to x,y, with the scroll behavior being the value of the behavior dictionary member of options.
+    // FIXME: Implement this in terms of calling "scroll the element".
+    auto scroll_offset = paintable_box()->scroll_offset();
+    scroll_offset.set_x(CSSPixels::nearest_value_for(x));
+    scroll_offset.set_y(CSSPixels::nearest_value_for(y));
+    paintable_box()->set_scroll_offset(scroll_offset);
 }
 
 // https://drafts.csswg.org/cssom-view/#dom-element-scroll
-void Element::scroll(HTML::ScrollToOptions const&)
+void Element::scroll(HTML::ScrollToOptions options)
 {
-    dbgln("FIXME: Implement Element::scroll(ScrollToOptions)");
+    // 1. If invoked with one argument, follow these substeps:
+    //     1. Let options be the argument.
+    //     2. Normalize non-finite values for left and top dictionary members of options, if present.
+    //     3. Let x be the value of the left dictionary member of options, if present, or the element’s current scroll position on the x axis otherwise.
+    //     4. Let y be the value of the top dictionary member of options, if present, or the element’s current scroll position on the y axis otherwise.
+    // NOTE: remaining steps performed by Element::scroll(double x, double y)
+    auto x = options.left.has_value() ? HTML::normalize_non_finite_values(options.left.value()) : scroll_left();
+    auto y = options.top.has_value() ? HTML::normalize_non_finite_values(options.top.value()) : scroll_top();
+    scroll(x, y);
 }
 
-// https://drafts.csswg.org/cssom-view/#dom-window-scrollby
+// https://drafts.csswg.org/cssom-view/#dom-element-scrollby
 void Element::scroll_by(double x, double y)
 {
-    dbgln("FIXME: Implement Element::scroll_by({}, {})", x, y);
+    // 1. Let options be null converted to a ScrollToOptions dictionary. [WEBIDL]
+    HTML::ScrollToOptions options;
+
+    // 2. Let x and y be the arguments, respectively.
+    // 3. Normalize non-finite values for x and y.
+    // 4. Let the left dictionary member of options have the value x.
+    // 5. Let the top dictionary member of options have the value y.
+    // NOTE: Element::scroll_by(HTML::ScrollToOptions) performs the normalization and following steps.
+    options.left = x;
+    options.top = y;
+    scroll_by(options);
 }
 
-// https://drafts.csswg.org/cssom-view/#dom-window-scrollby
-void Element::scroll_by(HTML::ScrollToOptions const&)
+// https://drafts.csswg.org/cssom-view/#dom-element-scrollby
+void Element::scroll_by(HTML::ScrollToOptions options)
 {
-    dbgln("FIXME: Implement Element::scroll_by(ScrollToOptions)");
+    // 1. Let options be the argument.
+    // 2. Normalize non-finite values for left and top dictionary members of options, if present.
+    auto left = HTML::normalize_non_finite_values(options.left);
+    auto top = HTML::normalize_non_finite_values(options.top);
+
+    // 3. Add the value of scrollLeft to the left dictionary member.
+    options.left = scroll_left() + left;
+
+    // 4. Add the value of scrollTop to the top dictionary member.
+    options.top = scroll_top() + top;
+
+    // 5. Act as if the scroll() method was invoked with options as the only argument.
+    scroll(options);
 }
 
 bool Element::id_reference_exists(String const& id_reference) const
@@ -2179,9 +2377,65 @@ IntersectionObserver::IntersectionObserverRegistration& Element::get_intersectio
 // https://html.spec.whatwg.org/multipage/dom.html#the-directionality
 Element::Directionality Element::directionality() const
 {
-    // The directionality of an element (any element, not just an HTML element) is either 'ltr' or 'rtl',
-    // and is determined as per the first appropriate set of steps from the following list:
+    // The directionality of an element (any element, not just an HTML element) is either 'ltr' or 'rtl'.
+    // To compute the directionality given an element element, switch on element's dir attribute state:
+    auto maybe_dir = this->dir();
+    if (maybe_dir.has_value()) {
+        auto dir = maybe_dir.release_value();
+        switch (dir) {
+        // -> ltr
+        case Dir::Ltr:
+            // Return 'ltr'.
+            return Directionality::Ltr;
+        // -> rtl
+        case Dir::Rtl:
+            // Return 'rtl'.
+            return Directionality::Rtl;
+        // -> auto
+        case Dir::Auto:
+            // 1. Let result be the auto directionality of element.
+            auto result = auto_directionality();
 
+            // 2. If result is null, then return 'ltr'.
+            if (!result.has_value())
+                return Directionality::Ltr;
+
+            // 3. Return result.
+            return result.release_value();
+        }
+    }
+    // -> undefined
+    VERIFY(!maybe_dir.has_value());
+
+    // FIXME: If element is a bdi element:
+    // FIXME:     1. Let result be the auto directionality of element.
+    // FIXME:     2. If result is null, then return 'ltr'.
+    // FIXME:     3. Return result.
+
+    // If element is an input element whose type attribute is in the Telephone state:
+    if (is<HTML::HTMLInputElement>(this) && static_cast<HTML::HTMLInputElement const&>(*this).type_state() == HTML::HTMLInputElement::TypeAttributeState::Telephone) {
+        // Return 'ltr'.
+        return Directionality::Ltr;
+    }
+
+    // Otherwise:
+    // Return the parent directionality of element.
+    return parent_directionality();
+}
+
+// https://html.spec.whatwg.org/multipage/dom.html#auto-directionality-form-associated-elements
+bool Element::is_auto_directionality_form_associated_element() const
+{
+    // The auto-directionality form-associated elements are:
+    // input elements whose type attribute is in the Hidden, Text, Search, Telephone, URL, Email, Password, Submit Button, Reset Button, or Button state,
+    // and textarea elements.
+    return is<HTML::HTMLTextAreaElement>(this)
+        || (is<HTML::HTMLInputElement>(this) && first_is_one_of(static_cast<HTML::HTMLInputElement const&>(*this).type_state(), HTML::HTMLInputElement::TypeAttributeState::Hidden, HTML::HTMLInputElement::TypeAttributeState::Text, HTML::HTMLInputElement::TypeAttributeState::Search, HTML::HTMLInputElement::TypeAttributeState::Telephone, HTML::HTMLInputElement::TypeAttributeState::URL, HTML::HTMLInputElement::TypeAttributeState::Email, HTML::HTMLInputElement::TypeAttributeState::Password, HTML::HTMLInputElement::TypeAttributeState::SubmitButton, HTML::HTMLInputElement::TypeAttributeState::ResetButton, HTML::HTMLInputElement::TypeAttributeState::Button));
+}
+
+// https://html.spec.whatwg.org/multipage/dom.html#auto-directionality
+Optional<Element::Directionality> Element::auto_directionality() const
+{
     static auto bidirectional_class_L = Unicode::bidirectional_class_from_string("L"sv);
     static auto bidirectional_class_AL = Unicode::bidirectional_class_from_string("AL"sv);
     static auto bidirectional_class_R = Unicode::bidirectional_class_from_string("R"sv);
@@ -2190,46 +2444,39 @@ Element::Directionality Element::directionality() const
     if (!bidirectional_class_L.has_value())
         return Directionality::Ltr;
 
-    auto dir = this->dir();
+    // https://html.spec.whatwg.org/multipage/dom.html#text-node-directionality
+    auto text_node_directionality = [](Text const& text_node) -> Optional<Directionality> {
+        // 1. If text's data does not contain a code point whose bidirectional character type is L, AL, or R, then return null.
+        // 2. Let codePoint be the first code point in text's data whose bidirectional character type is L, AL, or R.
+        Optional<Unicode::BidirectionalClass> found_character_bidi_class;
+        for (auto code_point : Utf8View(text_node.data())) {
+            auto bidi_class = Unicode::bidirectional_class(code_point);
+            if (first_is_one_of(bidi_class, bidirectional_class_L, bidirectional_class_AL, bidirectional_class_R)) {
+                found_character_bidi_class = bidi_class;
+                break;
+            }
+        }
+        if (!found_character_bidi_class.has_value())
+            return {};
 
-    // -> If the element's dir attribute is in the ltr state
-    // -> If the element is a document element and the dir attribute is not in a defined state
-    //    (i.e. it is not present or has an invalid value)
-    // -> If the element is an input element whose type attribute is in the Telephone state, and the
-    //    dir attribute is not in a defined state (i.e. it is not present or has an invalid value)
-    if (dir == Dir::Ltr
-        || (is_document_element() && !dir.has_value())
-        || (is<HTML::HTMLInputElement>(this)
-            && static_cast<HTML::HTMLInputElement const&>(*this).type_state() == HTML::HTMLInputElement::TypeAttributeState::Telephone
-            && !dir.has_value())) {
-        // The directionality of the element is 'ltr'.
+        // 3. If codePoint is of bidirectional character type AL or R, then return 'rtl'.
+        if (first_is_one_of(*found_character_bidi_class, bidirectional_class_AL, bidirectional_class_R))
+            return Directionality::Rtl;
+
+        // 4. If codePoint is of bidirectional character type L, then return 'ltr'.
+        // NOTE: codePoint should always be of bidirectional character type L by this point, so we can just return 'ltr' here.
+        VERIFY(*found_character_bidi_class == bidirectional_class_L);
         return Directionality::Ltr;
-    }
+    };
 
-    // -> If the element's dir attribute is in the rtl state
-    if (dir == Dir::Rtl) {
-        // The directionality of the element is 'rtl'.
-        return Directionality::Rtl;
-    }
+    // 1. If element is an auto-directionality form-associated element:
+    if (is_auto_directionality_form_associated_element()) {
+        auto const* form_associated_element = dynamic_cast<HTML::FormAssociatedElement const*>(this);
+        VERIFY(form_associated_element);
+        auto const& value = form_associated_element->value();
 
-    // -> If the element is an input element whose type attribute is in the Text, Search, Telephone,
-    //    URL, or Email state, and the dir attribute is in the auto state
-    // -> If the element is a textarea element and the dir attribute is in the auto state
-    if ((is<HTML::HTMLInputElement>(this)
-            && first_is_one_of(static_cast<HTML::HTMLInputElement const&>(*this).type_state(),
-                HTML::HTMLInputElement::TypeAttributeState::Text, HTML::HTMLInputElement::TypeAttributeState::Search,
-                HTML::HTMLInputElement::TypeAttributeState::Telephone, HTML::HTMLInputElement::TypeAttributeState::URL,
-                HTML::HTMLInputElement::TypeAttributeState::Email)
-            && dir == Dir::Auto)
-        || (is<HTML::HTMLTextAreaElement>(this) && dir == Dir::Auto)) {
-
-        auto value = is<HTML::HTMLInputElement>(this)
-            ? static_cast<HTML::HTMLInputElement const&>(*this).value()
-            : static_cast<HTML::HTMLTextAreaElement const&>(*this).value();
-
-        // If the element's value contains a character of bidirectional character type AL or R, and
-        // there is no character of bidirectional character type L anywhere before it in the element's
-        // value, then the directionality of the element is 'rtl'. [BIDI]
+        // 1. If element's value contains a character of bidirectional character type AL or R,
+        //    and there is no character of bidirectional character type L anywhere before it in the element's value, then return 'rtl'.
         for (auto code_point : Utf8View(value)) {
             auto bidi_class = Unicode::bidirectional_class(code_point);
             if (bidi_class == bidirectional_class_L)
@@ -2238,87 +2485,114 @@ Element::Directionality Element::directionality() const
                 return Directionality::Rtl;
         }
 
-        // Otherwise, if the element's value is not the empty string, or if the element is a document element,
-        // the directionality of the element is 'ltr'.
-        if (!value.is_empty() || is_document_element()) {
+        // 2. If element's value is not the empty string, then return 'ltr'.
+        if (value.is_empty())
             return Directionality::Ltr;
-        }
-        // Otherwise, the directionality of the element is the same as the element's parent element's directionality.
-        else {
-            return parent_element()->directionality();
-        }
+
+        // 3. Return null.
+        return {};
     }
 
-    // -> If the element's dir attribute is in the auto state
-    // FIXME: -> If the element is a bdi element and the dir attribute is not in a defined state
-    //    (i.e. it is not present or has an invalid value)
-    if (dir == Dir::Auto) {
-        // Find the first character in tree order that matches the following criteria:
-        // - The character is from a Text node that is a descendant of the element whose directionality is being determined.
-        // - The character is of bidirectional character type L, AL, or R. [BIDI]
-        // - The character is not in a Text node that has an ancestor element that is a descendant of
-        //   the element whose directionality is being determined and that is either:
-        //   - FIXME: A bdi element.
-        //   - A script element.
-        //   - A style element.
-        //   - A textarea element.
-        //   - An element with a dir attribute in a defined state.
-        Optional<u32> found_character;
-        Optional<Unicode::BidirectionalClass> found_character_bidi_class;
-        for_each_in_subtree_of_type<Text>([&](Text const& text_node) {
-            // Discard not-allowed ancestors
-            for (auto* ancestor = text_node.parent(); ancestor && ancestor != this; ancestor = ancestor->parent()) {
-                if (is<HTML::HTMLScriptElement>(*ancestor) || is<HTML::HTMLStyleElement>(*ancestor) || is<HTML::HTMLTextAreaElement>(*ancestor))
-                    return IterationDecision::Continue;
-                if (ancestor->is_element()) {
-                    auto ancestor_element = static_cast<Element const*>(ancestor);
-                    if (ancestor_element->dir().has_value())
-                        return IterationDecision::Continue;
+    // 2. If element is a slot element whose root is a shadow root and element's assigned nodes are not empty:
+    if (is<HTML::HTMLSlotElement>(this)) {
+        auto const& slot = static_cast<HTML::HTMLSlotElement const&>(*this);
+        if (slot.root().is_shadow_root() && !slot.assigned_nodes().is_empty()) {
+            // 1 . For each node child of element's assigned nodes:
+            for (auto const& child : slot.assigned_nodes()) {
+                // 1. Let childDirection be null.
+                Optional<Directionality> child_direction;
+
+                // 2. If child is a Text node, then set childDirection to the text node directionality of child.
+                if (child->is_text())
+                    child_direction = text_node_directionality(static_cast<Text const&>(*child));
+
+                // 3. Otherwise:
+                else {
+                    // 1. Assert: child is an Element node.
+                    VERIFY(child->is_element());
+
+                    // 2. Set childDirection to the auto directionality of child.
+                    child_direction = static_cast<HTML::HTMLElement const&>(*this).auto_directionality();
                 }
+
+                // 4. If childDirection is not null, then return childDirection.
+                if (child_direction.has_value())
+                    return child_direction;
             }
 
-            // Look for matching characters
-            for (auto code_point : Utf8View(text_node.data())) {
-                auto bidi_class = Unicode::bidirectional_class(code_point);
-                if (first_is_one_of(bidi_class, bidirectional_class_L, bidirectional_class_AL, bidirectional_class_R)) {
-                    found_character = code_point;
-                    found_character_bidi_class = bidi_class;
-                    return IterationDecision::Break;
-                }
+            // 2. Return null.
+            return {};
+        }
+    }
+
+    // 3. For each node descendant of element's descendants, in tree order:
+    Optional<Directionality> result;
+    for_each_in_subtree([&](auto& descendant) {
+        // 1. If descendant, or any of its ancestor elements that are descendants of element, is one of
+        // - FIXME: a bdi element
+        // - a script element
+        // - a style element
+        // - a textarea element
+        // - an element whose dir attribute is not in the undefined state
+        // then continue.
+        if (is<HTML::HTMLScriptElement>(descendant)
+            || is<HTML::HTMLStyleElement>(descendant)
+            || is<HTML::HTMLTextAreaElement>(descendant)
+            || (is<Element>(descendant) && static_cast<Element const&>(descendant).dir().has_value())) {
+            return TraversalDecision::SkipChildrenAndContinue;
+        }
+
+        // 2. If descendant is a slot element whose root is a shadow root, then return the directionality of that shadow root's host.
+        if (is<HTML::HTMLSlotElement>(descendant)) {
+            auto const& root = static_cast<HTML::HTMLSlotElement const&>(descendant).root();
+            if (root.is_shadow_root()) {
+                auto const& host = static_cast<ShadowRoot const&>(root).host();
+                VERIFY(host);
+                result = host->directionality();
+                return TraversalDecision::Break;
             }
+        }
 
-            return IterationDecision::Continue;
-        });
+        // 3. If descendant is not a Text node, then continue.
+        if (!descendant.is_text())
+            return TraversalDecision::Continue;
 
-        // If such a character is found and it is of bidirectional character type AL or R,
-        // the directionality of the element is 'rtl'.
-        if (found_character.has_value()
-            && first_is_one_of(found_character_bidi_class.value(), bidirectional_class_AL, bidirectional_class_R)) {
-            return Directionality::Rtl;
-        }
-        // If such a character is found and it is of bidirectional character type L,
-        // the directionality of the element is 'ltr'.
-        if (found_character.has_value() && found_character_bidi_class.value() == bidirectional_class_L) {
-            return Directionality::Ltr;
-        }
-        // Otherwise, if the element is a document element, the directionality of the element is 'ltr'.
-        else if (is_document_element()) {
-            return Directionality::Ltr;
-        }
-        // Otherwise, the directionality of the element is the same as the element's parent element's directionality.
-        else {
-            return parent_element()->directionality();
-        }
+        // 4. Let result be the text node directionality of descendant.
+        result = text_node_directionality(static_cast<Text const&>(descendant));
+
+        // 5. If result is not null, then return result.
+        if (result.has_value())
+            return TraversalDecision::Break;
+
+        return TraversalDecision::Continue;
+    });
+
+    if (result.has_value())
+        return result;
+
+    // 4. Return null.
+    return {};
+}
+
+// https://html.spec.whatwg.org/multipage/dom.html#parent-directionality
+Element::Directionality Element::parent_directionality() const
+{
+    // 1. Let parentNode be element's parent node.
+    auto const* parent_node = this->parent_node();
+
+    // 2. If parentNode is a shadow root, then return the directionality of parentNode's host.
+    if (is<ShadowRoot>(parent_node)) {
+        auto const& host = static_cast<ShadowRoot const&>(*parent_node).host();
+        VERIFY(host);
+        return host->directionality();
     }
 
-    // If the element has a parent element and the dir attribute is not in a defined state
-    // (i.e. it is not present or has an invalid value)
-    if (parent_element() && !dir.has_value()) {
-        // The directionality of the element is the same as the element's parent element's directionality.
-        return parent_element()->directionality();
-    }
+    // 3. If parentNode is an element, then return the directionality of parentNode.
+    if (is<Element>(parent_node))
+        return static_cast<Element const&>(*parent_node).directionality();
 
-    VERIFY_NOT_REACHED();
+    // 4. Return 'ltr'.
+    return Directionality::Ltr;
 }
 
 // https://dom.spec.whatwg.org/#ref-for-concept-element-attributes-change-ext①
@@ -2368,6 +2642,34 @@ CSS::StyleSheetList& Element::document_or_shadow_root_style_sheets()
         return static_cast<DOM::ShadowRoot&>(root_node).style_sheets();
 
     return document().style_sheets();
+}
+
+// https://html.spec.whatwg.org/#dom-element-gethtml
+WebIDL::ExceptionOr<String> Element::get_html(GetHTMLOptions const& options) const
+{
+    // Element's getHTML(options) method steps are to return the result
+    // of HTML fragment serialization algorithm with this,
+    // options["serializableShadowRoots"], and options["shadowRoots"].
+    return HTML::HTMLParser::serialize_html_fragment(
+        *this,
+        options.serializable_shadow_roots ? HTML::HTMLParser::SerializableShadowRoots::Yes : HTML::HTMLParser::SerializableShadowRoots::No,
+        options.shadow_roots);
+}
+
+// https://html.spec.whatwg.org/#dom-element-sethtmlunsafe
+WebIDL::ExceptionOr<void> Element::set_html_unsafe(StringView html)
+{
+    // FIXME: 1. Let compliantHTML be the result of invoking the Get Trusted Type compliant string algorithm with TrustedHTML, this's relevant global object, html, "Element setHTMLUnsafe", and "script".
+
+    // 2. Let target be this's template contents if this is a template element; otherwise this.
+    DOM::Node* target = this;
+    if (is<HTML::HTMLTemplateElement>(*this))
+        target = verify_cast<HTML::HTMLTemplateElement>(*this).content().ptr();
+
+    // 3. Unsafe set HTML given target, this, and compliantHTML. FIXME: Use compliantHTML.
+    TRY(target->unsafely_set_html(*this, html));
+
+    return {};
 }
 
 }
