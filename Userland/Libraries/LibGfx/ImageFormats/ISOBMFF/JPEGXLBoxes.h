@@ -16,6 +16,8 @@ namespace Gfx::ISOBMFF {
 // 9.1  JPEG XL Signature box (JXL␣)
 struct JPEGXLSignatureBox final : public Box {
     BOX_SUBTYPE(JPEGXLSignatureBox);
+
+    u32 signature { 0 };
 };
 
 // 9.3  Level box (jxll)
@@ -29,6 +31,17 @@ struct JPEGXLLevelBox final : public Box {
 struct JPEGXLCodestreamBox final : public Box {
     BOX_SUBTYPE(JPEGXLCodestreamBox);
 
+    Vector<u8> codestream;
+};
+
+// 9.10 - JPEG XL Partial Codestream box (jxlp)
+struct JPEGXLPartialCodestreamBox final : public Box {
+    BOX_SUBTYPE(JPEGXLPartialCodestreamBox);
+
+    u32 index() const { return part_index & 0x7FFF'FFFF; }
+    bool is_last() const { return (part_index & 0x8000'0000) != 0; }
+
+    u32 part_index { 0 };
     Vector<u8> codestream;
 };
 

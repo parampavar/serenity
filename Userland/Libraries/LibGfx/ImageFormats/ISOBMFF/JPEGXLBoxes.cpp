@@ -10,14 +10,14 @@ namespace Gfx::ISOBMFF {
 
 ErrorOr<void> JPEGXLSignatureBox::read_from_stream(ConstrainedStream& stream)
 {
-    // FIXME: Make the decoder check the signature.
-    TRY(stream.discard(4));
+    signature = TRY(stream.read_value<BigEndian<u32>>());
     return {};
 }
 
 void JPEGXLSignatureBox::dump(String const& prepend) const
 {
     Box::dump(prepend);
+    outln("{}- signature = {:#08x}", prepend, signature);
 }
 
 ErrorOr<void> JPEGXLLevelBox::read_from_stream(ConstrainedStream& stream)
@@ -43,6 +43,23 @@ ErrorOr<void> JPEGXLCodestreamBox::read_from_stream(ConstrainedStream& stream)
 void JPEGXLCodestreamBox::dump(String const& prepend) const
 {
     Box::dump(prepend);
+    outln("{}- size = {}", prepend, codestream.size());
+}
+
+ErrorOr<void> JPEGXLPartialCodestreamBox::read_from_stream(ConstrainedStream& stream)
+{
+    part_index = TRY(stream.read_value<BigEndian<u32>>());
+
+    // FIXME: Prevent the copy.
+    TRY(codestream.try_resize(stream.remaining()));
+    TRY(stream.read_until_filled(codestream.span()));
+    return {};
+}
+
+void JPEGXLPartialCodestreamBox::dump(String const& prepend) const
+{
+    Box::dump(prepend);
+    outln("{}- index = {}{}", prepend, index(), is_last() ? " (last)" : "");
     outln("{}- size = {}", prepend, codestream.size());
 }
 
